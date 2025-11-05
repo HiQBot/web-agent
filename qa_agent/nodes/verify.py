@@ -33,20 +33,28 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
         
         verification_results = []
         
-        # TODO: Phase 5 - Implement actual verification logic
-        # For now, basic verification based on action results
+        # Verify actions based on action results
+        # An action is successful if:
+        # 1. success is True AND error is None/empty
+        # 2. extracted_content exists (indicates action executed)
         for result in action_results:
-            if "error" in result or not result.get("success", False):
+            success = result.get("success", False)
+            error = result.get("error")
+            extracted_content = result.get("extracted_content")
+            
+            # Action succeeded if success=True and no error
+            if success and not error:
                 verification_results.append({
-                    "status": "fail",
-                    "reason": result.get("error", "Action failed"),
+                    "status": "pass",
+                    "reason": f"Action completed: {extracted_content[:50] if extracted_content else 'Success'}",
                     "details": result,
                 })
             else:
+                # Action failed if success=False OR error exists
                 verification_results.append({
-                    "status": "pass",
-                    "details": "Action completed successfully",
-                    "result": result,
+                    "status": "fail",
+                    "reason": error or "Action returned success=False",
+                    "details": result,
                 })
         
         # Determine overall status

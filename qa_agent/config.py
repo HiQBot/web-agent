@@ -1,6 +1,7 @@
 """
 Configuration settings for QA Agent
 """
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from typing import Optional
@@ -52,8 +53,11 @@ class Settings(BaseSettings):
 
     # Browser-use compatibility settings (used by profile.py)
     IN_DOCKER: bool = False
+    BROWSER_USE_CONFIG_DIR: Path = Path.home() / ".browser-use"
     BROWSER_USE_DEFAULT_USER_DATA_DIR: Path = Path.home() / ".browser-use" / "user-data"
     BROWSER_USE_EXTENSIONS_DIR: Path = Path.home() / ".browser-use" / "extensions"
+    ANONYMIZED_TELEMETRY: bool = False  # Disable telemetry
+    BROWSER_USE_LOGGING_LEVEL: str = "INFO"  # Browser-use logging level
 
     class Config:
         env_file = ".env"
@@ -65,4 +69,14 @@ settings = Settings()
 
 # Backward compatibility alias for browser-use code
 CONFIG = settings
+
+
+def is_running_in_docker() -> bool:
+	"""
+	Check if running inside Docker container
+
+	Returns:
+		True if running in Docker, False otherwise
+	"""
+	return os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv') or settings.IN_DOCKER
 

@@ -5,6 +5,7 @@ Manages browser session creation and cleanup for kernel-image CDP connection.
 """
 import logging
 from typing import Optional
+import httpx
 from uuid_extensions import uuid7str
 
 from qa_agent.browser.session import BrowserSession
@@ -30,9 +31,15 @@ async def create_browser_session(start_url: Optional[str] = None) -> tuple[str, 
 	# Generate unique session ID
 	session_id = uuid7str()
 
-	# Build CDP URL for kernel-image connection
-	cdp_url = f"http://{settings.kernel_cdp_host}:{settings.kernel_cdp_port}"
-	logger.info(f"Connecting to kernel-image CDP at: {cdp_url}")
+	# Get WebSocket debugger URL from kernel-image HTTP endpoint
+	http_url = f"http://{settings.kernel_cdp_host}:{settings.kernel_cdp_port}"
+	logger.info(f"Querying CDP endpoint at: {http_url}")
+
+	async with httpx.AsyncClient() as client:
+		response = await client.get(f"{http_url}/json/version")
+		version_data = response.json()
+		cdp_url = version_data["webSocketDebuggerUrl"]
+		logger.info(f"Got WebSocket URL: {cdp_url}")
 
 	# Create browser profile configured for kernel-image (remote CDP)
 	profile = BrowserProfile(
@@ -64,8 +71,8 @@ async def create_browser_session(start_url: Optional[str] = None) -> tuple[str, 
 	# Navigate to start URL if provided
 	if start_url:
 		logger.info(f"Navigating to start URL: {start_url}")
-		# TODO: Navigate using session.navigate() or similar
-		# await session.navigate(start_url)
+		await session.navigate_to(start_url)
+		logger.info(f"Successfully navigated to: {start_url}")
 
 	return session_id, session
 

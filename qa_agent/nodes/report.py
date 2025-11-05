@@ -6,12 +6,14 @@ This node:
 2. Generates test report (pass/fail)
 3. Formats output (JSON, HTML, markdown)
 4. Includes screenshots/videos if available
+5. Cleans up browser session
 """
 import logging
 from typing import Dict, Any
 from datetime import datetime
 from qa_agent.state import QAAgentState
 from qa_agent.config import settings
+from qa_agent.utils.browser_manager import cleanup_browser_session
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +48,19 @@ async def report_node(state: QAAgentState) -> Dict[str, Any]:
         
         # TODO: Phase 6 - Add screenshot/video capture
         # TODO: Phase 6 - Format report (JSON, HTML, markdown)
-        
+
+        # Cleanup browser session
+        browser_session_id = state.get("browser_session_id")
+        if browser_session_id:
+            try:
+                logger.info(f"Cleaning up browser session: {browser_session_id}")
+                await cleanup_browser_session(browser_session_id)
+                logger.info("Browser session cleaned up successfully")
+            except Exception as e:
+                logger.warning(f"Error cleaning up browser session: {e}")
+
         logger.info(f"Report generated: {report.get('final_status')} - {report.get('steps')} steps")
-        
+
         return {
             "report": report,
             "completed": True,

@@ -7,7 +7,7 @@ import logging
 from typing import Literal, Any
 from langgraph.graph import StateGraph, START, END
 from qa_agent.state import QAAgentState
-from qa_agent.nodes import think_node, act_node, verify_node, report_node
+from qa_agent.nodes import init_node, think_node, act_node, verify_node, report_node
 from qa_agent.config import settings
 
 logger = logging.getLogger(__name__)
@@ -128,13 +128,16 @@ def create_qa_workflow() -> Any:
     workflow = StateGraph(QAAgentState)
     
     # Add nodes
+    workflow.add_node("init", init_node)
     workflow.add_node("think", think_node)
     workflow.add_node("act", act_node)
     workflow.add_node("verify", verify_node)
     workflow.add_node("report", report_node)
-    
+
     # Set entry point using START constant (LangGraph v1.0 pattern)
-    workflow.add_edge(START, "think")
+    # START -> INIT -> THINK (INIT creates browser session)
+    workflow.add_edge(START, "init")
+    workflow.add_edge("init", "think")
     
     # Add conditional edges from think
     workflow.add_conditional_edges(

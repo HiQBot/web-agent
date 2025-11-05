@@ -9,7 +9,8 @@ from .session_registry import (
 	list_sessions,
 	session_count,
 )
-from .browser_utils import _log_pretty_path, _log_pretty_url, is_new_tab_page, time_execution_sync, time_execution_async, logger
+from .browser_utils import _log_pretty_path, _log_pretty_url, is_new_tab_page, time_execution_sync, time_execution_async, logger, match_url_with_domain_pattern
+from .singleton import singleton
 
 # Note: browser_manager is NOT imported here to avoid circular imports
 # Import it directly: from qa_agent.utils.browser_manager import create_browser_session
@@ -28,5 +29,7 @@ __all__ = [
 	"time_execution_sync",
 	"time_execution_async",
 	"logger",
+	"singleton",
+	"match_url_with_domain_pattern",
 ]
 
