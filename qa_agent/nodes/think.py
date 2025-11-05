@@ -42,11 +42,15 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         step_count = state.get("step_count", 0) + 1
         
         # Get browser state (Phase 2 will enhance this)
-        browser_session = state.get("browser_session")
+        from qa_agent.utils.session_registry import get_session
+
+        browser_session_id = state.get("browser_session_id")
+        browser_session = get_session(browser_session_id) if browser_session_id else None
         browser_state_summary = state.get("browser_state_summary")
-        
+
         if browser_session:
             # TODO: Phase 2 - Call browser state extractor
+            # from qa_agent.utils.browser_state import get_browser_state
             # browser_state_summary = await get_browser_state(browser_session)
             pass
         
@@ -135,12 +139,18 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         for i, action in enumerate(planned_actions, 1):
             print(f"  {i}. {action}")
         
-        # Check for "done" action from LLM
-        has_done_action = any(action.get("type") == "done" for action in planned_actions)
-        
+        # Check for "done" action from LLM (supports both "action" and "type" keys)
+        has_done_action = any(
+            action.get("action") == "done" or action.get("type") == "done"
+            for action in planned_actions
+        )
+
         if has_done_action:
-            done_action = next((a for a in planned_actions if a.get("type") == "done"), None)
-            done_message = done_action.get("message", "Task completed") if done_action else "Task completed"
+            done_action = next((
+                a for a in planned_actions
+                if a.get("action") == "done" or a.get("type") == "done"
+            ), None)
+            done_message = done_action.get("text") or done_action.get("message", "Task completed") if done_action else "Task completed"
             print(f"\n✅ LLM signaled task completion: {done_message}")
             logger.info(f"LLM completed task: {done_message}")
             

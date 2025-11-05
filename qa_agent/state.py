@@ -21,9 +21,10 @@ class QAAgentState(TypedDict):
     # Task & Goal
     task: str  # Original user task/instruction
     current_goal: Optional[str]  # Current sub-goal being worked on
-    
-    # Browser State
-    browser_session: Optional[Any]  # BrowserSession instance (not serializable)
+    start_url: Optional[str]  # Initial URL to navigate to
+
+    # Browser State (Serializable)
+    browser_session_id: Optional[str]  # Session ID for lookup in registry (serializable)
     current_url: Optional[str]  # Current page URL
     browser_state_summary: Optional[str]  # Serialized DOM state for LLM
     dom_snapshot: Optional[Dict[str, Any]]  # Full DOM snapshot data
@@ -45,7 +46,7 @@ class QAAgentState(TypedDict):
     
     # History & Context
     history: List[dict]  # Step-by-step execution history
-    messages: List[dict]  # LLM messages (for LangChain compatibility)
+    messages: List[dict]  # LLM messages (reserved for future LangChain message history compatibility)
     
     # Report
     report: Optional[dict]  # Final test report
@@ -54,23 +55,28 @@ class QAAgentState(TypedDict):
 def create_initial_state(
     task: str,
     max_steps: int = 50,
+    start_url: Optional[str] = None,
+    browser_session_id: Optional[str] = None,
     **kwargs
 ) -> QAAgentState:
     """
     Create initial state for QA agent workflow
-    
+
     Args:
         task: User task/instruction
         max_steps: Maximum steps allowed
+        start_url: Initial URL to navigate to
+        browser_session_id: Browser session ID (if session already created)
         **kwargs: Additional state fields
-        
+
     Returns:
         Initial QAAgentState
     """
     return QAAgentState(
         task=task,
         current_goal=None,
-        browser_session=None,
+        start_url=start_url,
+        browser_session_id=browser_session_id,
         current_url=None,
         browser_state_summary=None,
         dom_snapshot=None,

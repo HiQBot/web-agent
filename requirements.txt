@@ -13,10 +13,11 @@ langgraph>=1.0.0
 langchain-openai>=0.2.0
 langchain-anthropic>=0.2.0
 
-# Browser-Use dependencies (will be added as we integrate)
-# cdp-use
-# httpx
-# bubus
+# Browser-Use dependencies
+cdp-use>=0.1.0
+httpx>=0.27.0
+bubus>=0.1.0
+uuid7>=0.1.0
 
 # Async support
 asyncio-extras>=1.3.2

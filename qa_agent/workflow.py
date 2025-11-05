@@ -49,18 +49,26 @@ def should_continue(state: QAAgentState) -> Literal["continue", "retry", "done"]
             return "continue"
         
         if verification_status == "fail":
-            # Check retry count
+            # Count consecutive failures from most recent steps
             history = state.get("history", [])
-            retry_count = len([
-                h for h in history
-                if isinstance(h, dict) and h.get("node") == "verify" and h.get("verification_status") == "fail"
-            ])
-            
-            if retry_count < settings.max_retries:
-                logger.info(f"Verification failed, retrying ({retry_count}/{settings.max_retries})")
+            consecutive_failures = 0
+
+            # Iterate backwards through history
+            for entry in reversed(history):
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("node") == "verify":
+                    if entry.get("verification_status") == "fail":
+                        consecutive_failures += 1
+                    else:
+                        # Stop at first non-failure
+                        break
+
+            if consecutive_failures < settings.max_retries:
+                logger.info(f"Verification failed, retrying ({consecutive_failures}/{settings.max_retries})")
                 return "retry"
             else:
-                logger.warning("Max retries reached")
+                logger.warning(f"Max consecutive retries reached ({consecutive_failures}/{settings.max_retries})")
                 return "done"
         
         # Default: continue

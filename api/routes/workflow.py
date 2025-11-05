@@ -29,6 +29,7 @@ def get_workflow():
 class TaskRequest(BaseModel):
     """Request model for running a task"""
     task: str = Field(..., description="Task description or instruction")
+    start_url: Optional[str] = Field(default=None, description="Initial URL to navigate to for the test")
     max_steps: Optional[int] = Field(default=settings.max_steps, description="Maximum steps allowed")
 
 
@@ -62,6 +63,7 @@ async def run_task(request: TaskRequest):
         # Create initial state
         initial_state = create_initial_state(
             task=request.task,
+            start_url=request.start_url,
             max_steps=request.max_steps or settings.max_steps,
         )
         
