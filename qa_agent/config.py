@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # LLM Settings
     llm_provider: str = "openai"  # openai, anthropic, google, etc.
-    llm_model: str = "gpt-4o"  # Will be overridden by .env LLM_MODEL
+    llm_model: str = "gpt-4.1-mini"  # Will be overridden by .env LLM_MODEL
     llm_temperature: float = 0.7
     max_input_tokens: int = 128000  # gpt-4o context limit
     max_output_tokens: int = 16000

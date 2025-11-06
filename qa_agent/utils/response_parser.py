@@ -23,14 +23,21 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
         List of actions in our format
     """
     converted = []
+    logger.debug(f"Converting {len(actions)} browser-use actions: {actions}")
 
     for action_dict in actions:
         # Extract the action type (first key in dict)
         if not action_dict:
+            logger.debug("Skipping empty action_dict")
+            continue
+
+        if not isinstance(action_dict, dict):
+            logger.warning(f"Skipping non-dict action: {type(action_dict)} - {action_dict}")
             continue
 
         action_type = list(action_dict.keys())[0]
         action_params = action_dict[action_type]
+        logger.debug(f"Processing action: type={action_type}, params={action_params}, params_type={type(action_params)}")
 
         # Handle shorthand format: {"click": 1820} vs full format: {"click": {"index": 1820}}
         if isinstance(action_params, (int, str)):
@@ -85,15 +92,20 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
             # {"click": {"element": 6438}}
             # {"click": {"element_index": 6438}}
             # {"click": {"selector": 6438}} - LLM sometimes uses "selector"
+            if not isinstance(action_params, dict):
+                logger.warning(f"Click action params must be dict, got {type(action_params)}: {action_params}")
+                continue
             index = action_params.get("index") or action_params.get("element_index") or action_params.get("element") or action_params.get("selector")
             if index is None:
                 logger.warning(f"No index found in click action params: {action_params}")
                 continue
-            converted.append({
+            converted_action = {
                 "action": "click",  # Browser-use function name
                 "index": int(index),
                 "reasoning": "Browser-use action"
-            })
+            }
+            logger.debug(f"Converted click action: {converted_action}")
+            converted.append(converted_action)
         elif action_type == "input_text" or action_type == "input":
             # Input can have index, element_index, element, or id (browser-use supports id lookup)
             # LLM sometimes uses "element" instead of "index" or "element_index"
@@ -241,6 +253,7 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
         else:
             logger.warning(f"Unknown browser-use action type: {action_type}, skipping")
 
+    logger.debug(f"Converted {len(converted)} actions: {converted}")
     return converted
 
 
@@ -267,6 +280,8 @@ def parse_llm_action_plan(response_content: str) -> List[Dict[str, Any]]:
         logger.warning("Empty LLM response")
         return []
 
+    logger.debug(f"Parsing LLM response ({len(response_content)} chars): {response_content[:200]}...")
+
     # Strategy 1: Strip JSON comments before parsing (JSON doesn't support comments)
     # Remove single-line comments (// ...) and multi-line comments (/* ... */)
     cleaned_content = response_content.strip()
@@ -278,26 +293,45 @@ def parse_llm_action_plan(response_content: str) -> List[Dict[str, Any]]:
     # Strategy 1: Try direct JSON parsing (on cleaned content)
     try:
         parsed = json.loads(cleaned_content)
+        logger.debug(f"✅ Strategy 1 (direct JSON) succeeded: {type(parsed)}")
 
         # Browser-use format: {"thinking": "...", "action": [actions]}
         if isinstance(parsed, dict) and "action" in parsed:
             actions = parsed["action"]
+            logger.debug(f"Found 'action' key in parsed dict: {type(actions)}")
             if isinstance(actions, list):
-                return convert_browser_use_actions(actions)
+                logger.debug(f"Found actions array in 'action' key: {len(actions)} actions")
+                logger.debug(f"Actions array content: {actions}")
+                converted = convert_browser_use_actions(actions)
+                logger.debug(f"Converted to: {converted}")
+                return converted
+            elif isinstance(actions, dict):
+                # Single action object instead of array
+                logger.debug("Found single action object in 'action' key")
+                return convert_browser_use_actions([actions])
+            else:
+                logger.warning(f"Unexpected 'action' value type: {type(actions)}, value: {actions}")
             return []
 
         # Simple array format
         if isinstance(parsed, list):
+            logger.debug(f"✅ Strategy 1: Found JSON array with {len(parsed)} items")
             return parsed
 
         # Legacy dict format with "actions" key
         elif isinstance(parsed, dict) and "actions" in parsed:
+            logger.debug(f"✅ Strategy 1: Found 'actions' key")
             return parsed["actions"]
 
         # Handle single "done" action (both "type" and "action" keys)
         elif isinstance(parsed, dict) and (parsed.get("type") == "done" or parsed.get("action") == "done"):
+            logger.debug("✅ Strategy 1: Found 'done' action")
             return [parsed]
-    except json.JSONDecodeError:
+            
+        logger.debug(f"Strategy 1: Parsed JSON but no recognized format. Keys: {list(parsed.keys()) if isinstance(parsed, dict) else 'N/A'}")
+    except json.JSONDecodeError as e:
+        logger.debug(f"Strategy 1 (direct JSON) failed: {e}")
+        logger.debug(f"Failed content: {cleaned_content[:300]}")
         pass
     
     # Strategy 2: Extract JSON from markdown code blocks (handles both array and object formats)
@@ -323,14 +357,27 @@ def parse_llm_action_plan(response_content: str) -> List[Dict[str, Any]]:
         except json.JSONDecodeError:
             pass
     
-    # Strategy 3: Extract JSON array from text
+    # Strategy 3: Extract JSON array from text (but be more strict - only if it looks like actions)
+    # Avoid matching simple number arrays like [2007] which might be element indices
     json_array_pattern = r'(\[[\s\S]*?\])'
     matches = re.findall(json_array_pattern, response_content)
     for match in matches:
         try:
             actions = json.loads(match)
             if isinstance(actions, list) and len(actions) > 0:
-                return actions
+                # Only return if it looks like actions (has dicts with action-like keys)
+                # Skip simple number arrays (likely element indices from browser_state)
+                first_item = actions[0]
+                if isinstance(first_item, dict):
+                    # Check if it has action-like keys
+                    has_action_keys = any(key in first_item for key in ['action', 'type', 'switch', 'click', 'input', 'navigate'])
+                    if has_action_keys:
+                        return actions
+                    # If it's a dict but doesn't have action keys, might be malformed - skip
+                elif isinstance(first_item, (int, float)):
+                    # Simple number array - likely element indices, skip
+                    logger.debug(f"Skipping number array (likely element indices): {match[:50]}")
+                    continue
         except json.JSONDecodeError:
             continue
     

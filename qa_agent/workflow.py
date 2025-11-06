@@ -171,5 +171,53 @@ def create_qa_workflow() -> Any:
     
     logger.info("Workflow created successfully")
     
+    # Add graph visualization capability (LangGraph pattern)
+    try:
+        # Generate graph visualization
+        graph = compiled_workflow.get_graph()
+        logger.info("Graph visualization available - use workflow.get_graph().draw_mermaid_png() to visualize")
+    except Exception as e:
+        logger.debug(f"Could not get graph for visualization: {e}")
+    
     return compiled_workflow
+
+
+def visualize_workflow(workflow=None, output_file: str = "workflow_graph.png"):
+    """
+    Visualize the QA workflow graph.
+    
+    Args:
+        workflow: Compiled workflow (if None, creates new one)
+        output_file: Path to save PNG image
+        
+    Returns:
+        Graph visualization (PNG bytes or file path)
+    """
+    if workflow is None:
+        workflow = create_qa_workflow()
+    
+    try:
+        graph = workflow.get_graph()
+        
+        # Generate Mermaid diagram
+        mermaid_diagram = graph.draw_mermaid()
+        logger.info(f"Generated Mermaid diagram ({len(mermaid_diagram)} chars)")
+        
+        # Generate PNG (requires graphviz or mermaid.ink)
+        try:
+            png_bytes = graph.draw_mermaid_png()
+            if output_file:
+                with open(output_file, "wb") as f:
+                    f.write(png_bytes)
+                logger.info(f"✅ Workflow graph saved to: {output_file}")
+            return png_bytes
+        except Exception as e:
+            logger.warning(f"Could not generate PNG (install graphviz or use mermaid.ink): {e}")
+            logger.info("Mermaid diagram:")
+            print(mermaid_diagram)
+            return mermaid_diagram
+            
+    except Exception as e:
+        logger.error(f"Could not visualize workflow: {e}")
+        return None
 

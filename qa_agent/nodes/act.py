@@ -69,6 +69,20 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 			"action_results": [],
 		}
 
+	# CRITICAL: Get tabs BEFORE actions to detect new tabs opened by actions
+	# Browser-use pattern: Compare tabs before/after to detect new tabs
+	logger.info("📋 Getting tabs BEFORE actions (for new tab detection)...")
+	try:
+		browser_state_before = await session.get_browser_state_summary(include_screenshot=False, cached=True)
+		tabs_before = browser_state_before.tabs if browser_state_before.tabs else []
+		previous_tabs = [t.target_id for t in tabs_before]
+		initial_tab_count = len(previous_tabs)
+		logger.info(f"   Tabs before actions: {initial_tab_count} tabs")
+	except Exception as e:
+		logger.warning(f"Could not get tabs before actions: {e}")
+		previous_tabs = state.get("previous_tabs", [])
+		initial_tab_count = len(previous_tabs) if previous_tabs else state.get("tab_count", 1)
+
 	# Initialize Tools instance
 	logger.info("Initializing browser-use Tools")
 	tools = Tools()
@@ -181,19 +195,69 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	print(f"\n✅ Executed {len(executed_actions)}/{len(planned_actions)} actions")
 	print(f"{'='*80}\n")
 
+	# CRITICAL: Wait for DOM stability after actions (browser-use pattern)
+	# This ensures dropdowns, modals, and dynamic content are fully rendered
+	# before Think node analyzes the page
+	logger.info("⏳ Waiting for DOM stability after actions...")
+	from qa_agent.utils.dom_stability import wait_for_dom_stability, clear_cache_if_needed
+	
+	# Get previous URL before actions for cache clearing
+	previous_url = state.get("current_url") or state.get("previous_url")
+	
+	# Clear cache if actions might have changed the page/DOM
+	# Check all executed actions to see if any are page-changing
+	page_changing_action_types = ["navigate", "switch", "go_back"]
+	dom_changing_action_types = ["click", "input", "scroll"]
+	
+	has_page_changing_action = any(
+		a.get("action") in page_changing_action_types 
+		for a in executed_actions
+	)
+	has_dom_changing_action = any(
+		a.get("action") in dom_changing_action_types 
+		for a in executed_actions
+	)
+	
+	if has_page_changing_action or has_dom_changing_action:
+		# Clear cache for any action that might change DOM
+		action_type = executed_actions[-1].get("action") if executed_actions else "unknown"
+		await clear_cache_if_needed(session, action_type, previous_url)
+	
+	# Wait for network idle and DOM stability (browser-use pattern from DOMWatchdog)
+	await wait_for_dom_stability(session, max_wait_seconds=3.0)
+	
+	# CRITICAL: Fetch fresh browser state AFTER actions and DOM stability wait
+	# This ensures Think node sees the CURRENT page state (dropdowns, modals, new content)
+	# Browser-use pattern: Always get fresh state at start of next step
+	logger.info("🔄 Fetching fresh browser state after actions (for Think node)...")
+	fresh_browser_state = await session.get_browser_state_summary(
+		include_screenshot=False,
+		cached=False  # Force fresh state - critical after actions
+	)
+	
+	# Extract key info from fresh state
+	current_url = fresh_browser_state.url
+	current_title = fresh_browser_state.title
+	selector_map = fresh_browser_state.dom_state.selector_map if fresh_browser_state.dom_state else {}
+	element_count = len(selector_map)
+	
+	logger.info(f"✅ Fresh state retrieved: {current_title[:50]} ({current_url[:60]})")
+	logger.info(f"   Interactive elements: {element_count}")
+	logger.info(f"   💾 Passing fresh state to Think node - LLM will see CURRENT page structure")
+	
 	# Check for new tabs opened by actions (e.g., ChatGPT login opens new tab)
-	# Browser-use pattern: detect new tabs and capture their URLs for proper switching
+	# Browser-use pattern: detect new tabs by comparing before/after tab lists
 	new_tab_id = None
 	new_tab_url = None
 	try:
-		# Get current tabs from browser state (more reliable than accessing internal registry)
-		browser_state_after = await session.get_browser_state_summary(include_screenshot=False)
-		current_tabs = browser_state_after.tabs if browser_state_after.tabs else []
+		# Use fresh state we just fetched
+		current_tabs = fresh_browser_state.tabs if fresh_browser_state.tabs else []
 		current_tab_ids = [t.target_id for t in current_tabs]
 		
-		# Get previous tab state (from state)
-		previous_tabs = state.get("previous_tabs", [])  # List of tab IDs before actions
-		initial_tab_count = len(previous_tabs) if previous_tabs else state.get("tab_count", len(current_tab_ids))
+		# Use tabs_before we captured at the start of this function
+		# previous_tabs and initial_tab_count are already set above
+		
+		logger.info(f"📋 Comparing tabs: BEFORE={initial_tab_count} tabs, AFTER={len(current_tab_ids)} tabs")
 		
 		# Check if new tab was opened by comparing tab counts and IDs
 		if len(current_tab_ids) > initial_tab_count:
@@ -216,12 +280,13 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 			previous_tabs = current_tab_ids.copy()
 	except Exception as e:
 		logger.warning(f"Could not detect new tabs: {e}", exc_info=True)
-		# Fallback: try to get current tabs for next check
+		# Fallback: use fresh state we already fetched
 		try:
-			browser_state_after = await session.get_browser_state_summary(include_screenshot=False)
-			current_tabs = browser_state_after.tabs if browser_state_after.tabs else []
-			previous_tabs = [t.target_id for t in current_tabs]
+			current_tabs = fresh_browser_state.tabs if fresh_browser_state.tabs else []
+			current_tab_ids = [t.target_id for t in current_tabs]
+			previous_tabs = current_tab_ids.copy()
 		except:
+			current_tab_ids = []
 			previous_tabs = []
 
 	# Update history
@@ -242,6 +307,8 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	# Check if any executed action was a tab switch - mark it for enhanced LLM context
 	# This ensures think node provides context about the new page structure
 	just_switched_tab = any(a.get("action") == "switch" for a in executed_actions)
+	
+	# Build return state with fresh browser state info
 	return_state = {
 		"executed_actions": executed_actions,
 		"action_results": action_results,
@@ -250,25 +317,29 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 		"previous_tabs": previous_tabs,  # Track tabs for next comparison
 		"new_tab_id": new_tab_id,  # Pass to next node for tab switching
 		"new_tab_url": new_tab_url,  # Pass URL for context
+		# CRITICAL: Pass fresh state to Think node (browser-use pattern: backend 1 step ahead)
+		"fresh_state_available": True,  # Flag to tell Think node we have fresh state
+		"page_changed": has_page_changing_action or (previous_url and current_url != previous_url),
+		"current_url": current_url,  # Update current URL
+		"browser_state_summary": {  # Store summary for Think node
+			"url": current_url,
+			"title": current_title,
+			"element_count": element_count,
+			"tabs": [{"id": t.target_id[-4:], "title": t.title, "url": t.url} for t in current_tabs],
+		},
+		"dom_selector_map": selector_map,  # Cache selector map for Think node
+		"previous_url": current_url,  # Track URL for next step comparison
+		"previous_element_count": element_count,  # Track element count for change detection
 	}
 	
 	# If we explicitly switched tabs, mark it so think node provides enhanced context
 	if just_switched_tab:
 		return_state["just_switched_tab"] = True
-		# Get current state to capture URL/title after switch
-		try:
-			current_state_after_switch = await session.get_browser_state_summary(
-				include_screenshot=False,
-				cached=False  # Get fresh state after switch
-			)
-			return_state["tab_switch_url"] = current_state_after_switch.url
-			return_state["tab_switch_title"] = current_state_after_switch.title
-			logger.info(f"💾 Marked explicit tab switch in state - think node will provide enhanced context")
-			logger.info(f"   Switch context: {current_state_after_switch.title} ({current_state_after_switch.url})")
-		except Exception as e:
-			logger.debug(f"Could not get state after switch for context: {e}")
-			if new_tab_url:
-				return_state["tab_switch_url"] = new_tab_url
+		# Use fresh state we already fetched
+		return_state["tab_switch_url"] = current_url
+		return_state["tab_switch_title"] = current_title
+		logger.info(f"💾 Marked explicit tab switch in state - think node will provide enhanced context")
+		logger.info(f"   Switch context: {current_title} ({current_url})")
 	
 	return return_state
 

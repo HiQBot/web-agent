@@ -26,8 +26,24 @@ class QAAgentState(TypedDict):
     # Browser State (Serializable)
     browser_session_id: Optional[str]  # Session ID for lookup in registry (serializable)
     current_url: Optional[str]  # Current page URL
-    browser_state_summary: Optional[str]  # Serialized DOM state for LLM
+    browser_state_summary: Optional[Any]  # Browser state summary (dict or BrowserStateSummary object)
     dom_snapshot: Optional[Dict[str, Any]]  # Full DOM snapshot data
+    dom_selector_map: Optional[Dict[int, Any]]  # Cached selector map for element lookups
+    
+    # State Communication Flags (for Act → Think communication)
+    fresh_state_available: bool  # True if Act node fetched fresh state after actions
+    page_changed: bool  # True if page changed (navigation, tab switch, etc.)
+    previous_url: Optional[str]  # Previous URL for change detection
+    previous_element_count: Optional[int]  # Previous element count for change detection
+    
+    # Tab Management
+    new_tab_id: Optional[str]  # New tab ID if tab was opened
+    new_tab_url: Optional[str]  # New tab URL
+    just_switched_tab: bool  # True if tab was just switched
+    tab_switch_url: Optional[str]  # URL after tab switch
+    tab_switch_title: Optional[str]  # Title after tab switch
+    previous_tabs: List[str]  # List of previous tab IDs for comparison
+    tab_count: int  # Current number of tabs
     
     # Actions & Results
     planned_actions: List[dict]  # Actions planned by Think node
@@ -80,6 +96,18 @@ def create_initial_state(
         current_url=None,
         browser_state_summary=None,
         dom_snapshot=None,
+        dom_selector_map=None,
+        fresh_state_available=False,
+        page_changed=False,
+        previous_url=None,
+        previous_element_count=None,
+        new_tab_id=None,
+        new_tab_url=None,
+        just_switched_tab=False,
+        tab_switch_url=None,
+        tab_switch_title=None,
+        previous_tabs=[],
+        tab_count=1,
         planned_actions=[],
         executed_actions=[],
         action_results=[],

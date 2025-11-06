@@ -57,25 +57,52 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         # Get browser state summary with DOM extraction (browser-use native call)
         # Browser-use pattern: ALWAYS get fresh state at start of each step (see agent/service.py _prepare_context)
         # CRITICAL: On retry or after tab switch, this ensures we see the ACTUAL current page state, not stale state
-        # Force fresh state (cached=False) to ensure we get the current tab's DOM after switching
         
-        # CRITICAL: Check if verify node just switched tabs - log current tab before getting state
-        # This helps debug if we're getting the wrong tab's DOM
+        # OPTIMIZATION: Check if act node already provided fresh state after actions
+        # This is the "backend 1 step ahead" pattern - Act node waits for DOM stability and fetches fresh state
+        # Think node can reuse it to avoid duplicate work
+        fresh_state_available = state.get("fresh_state_available", False)
+        page_changed = state.get("page_changed", False)
+
+        # Track tab before state retrieval for comparison
         current_tab_before_state = browser_session.current_target_id
-        logger.info(f"Getting browser state (current tab before: {current_tab_before_state[-4:] if current_tab_before_state else 'unknown'})...")
         
-        logger.info("Extracting browser state with DOM (forcing fresh state, no cache)...")
-        browser_state = await browser_session.get_browser_state_summary(
-            include_screenshot=False,  # Set True if using vision model
-            include_recent_events=False,
-            cached=False  # Always get fresh state - critical after tab switches
-        )
+        if fresh_state_available:
+            # Act node already fetched fresh state after actions and DOM stability wait
+            # This ensures we see dropdowns, modals, and dynamic content that appeared after actions
+            logger.info("✅ Using pre-fetched fresh state from act node (after DOM stability wait)")
+            logger.info("   This ensures LLM sees CURRENT page structure (dropdowns, modals, new content)")
+            
+            # Still need to get full BrowserStateSummary object for LLM (not just summary dict)
+            # But we can use cached=False to ensure consistency
+            browser_state = await browser_session.get_browser_state_summary(
+                include_screenshot=False,
+                include_recent_events=False,
+                cached=False  # Force fresh to ensure consistency with Act node's state
+            )
+            
+            # Verify we got the same URL as Act node reported (sanity check)
+            act_node_url = state.get("current_url")
+            if act_node_url and browser_state.url != act_node_url:
+                logger.warning(f"⚠️ URL mismatch: Act node reported {act_node_url}, Think node got {browser_state.url}")
+        else:
+            # Normal flow: fetch fresh state (first step, or if Act node didn't provide state)
+            # CRITICAL: Check if verify node just switched tabs - log current tab before getting state
+            # This helps debug if we're getting the wrong tab's DOM
+            logger.info(f"Getting browser state (current tab before: {current_tab_before_state[-4:] if current_tab_before_state else 'unknown'})...")
+
+            logger.info("Extracting browser state with DOM (forcing fresh state, no cache)...")
+            browser_state = await browser_session.get_browser_state_summary(
+                include_screenshot=False,  # Set True if using vision model
+                include_recent_events=False,
+                cached=False  # Always get fresh state - critical after tab switches
+            )
         
         # Verify we got state from the correct tab
         current_tab_after_state = browser_session.current_target_id
         logger.info(f"State retrieved (current tab after: {current_tab_after_state[-4:] if current_tab_after_state else 'unknown'})")
-        if current_tab_before_state != current_tab_after_state:
-            logger.warning(f"⚠️ Tab changed during state retrieval: {current_tab_before_state[-4:] if current_tab_before_state else 'unknown'} → {current_tab_after_state[-4:] if current_tab_after_state else 'unknown'}")
+        if current_tab_before_state and current_tab_after_state and current_tab_before_state != current_tab_after_state:
+            logger.warning(f"⚠️ Tab changed during state retrieval: {current_tab_before_state[-4:]} → {current_tab_after_state[-4:]}")
 
         # Extract DOM data for logging/history (browser-use handles DOM internally in AgentMessagePrompt)
         current_url = browser_state.url
@@ -506,27 +533,101 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         print(f"{'='*80}")
         print(f"\n📄 Raw Response ({len(response_content)} chars):\n{response_content}")
         
-        # Parse LLM response into actions and extract structured fields
+        # Parse LLM response using browser-use pattern: Pydantic validation
         print(f"\n🔍 Parsing LLM response...")
-        planned_actions = parse_llm_action_plan(response_content)
+        logger.debug(f"Response content type: {type(response_content)}, length: {len(response_content)}")
+        logger.debug(f"Response content preview: {response_content[:500]}")
         
-        # Try to extract evaluation/memory/goal from structured JSON response (browser-use AgentOutput format)
+        # Browser-use pattern: Parse JSON and convert action dicts to our format using Tools registry
+        # This matches browser-use's _convert_initial_actions pattern (agent/service.py:2202)
+        planned_actions = []
         evaluation_previous_goal = None
         memory = None
         next_goal = None
         thinking = None
         
         try:
-            # Try to parse JSON from response
-            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_content, re.DOTALL)
+            # Parse JSON response (browser-use format: {"thinking": "...", "action": [{...}]})
+            import json
+            json_match = re.search(r'\{[\s\S]*\}', response_content, re.DOTALL)
             if json_match:
                 llm_data = json.loads(json_match.group(0))
+                
+                # Extract structured fields
                 evaluation_previous_goal = llm_data.get("evaluation_previous_goal")
                 memory = llm_data.get("memory")
                 next_goal = llm_data.get("next_goal")
                 thinking = llm_data.get("thinking")
+                
+                # Convert actions using browser-use pattern (agent/service.py:2202-2222)
+                # Browser-use uses Tools registry to convert action dicts to ActionModel
+                actions_list = llm_data.get("action", [])
+                if actions_list:
+                    from qa_agent.tools.service import Tools
+                    tools = Tools()
+                    DynamicActionModel = tools.registry.create_action_model(page_url=None)
+                    
+                    for action_dict in actions_list:
+                        # Browser-use pattern: Each action_dict has single key-value pair
+                        # e.g., {"click": {"index": 1800}} or {"switch_tab": {"tab_id": "new"}}
+                        if not isinstance(action_dict, dict):
+                            logger.warning(f"Skipping non-dict action: {action_dict}")
+                            continue
+                        
+                        # Get action name (first key)
+                        action_name = next(iter(action_dict))
+                        params = action_dict[action_name]
+                        
+                        # Handle action name aliases (browser-use uses "switch" not "switch_tab")
+                        action_name_aliases = {
+                            "switch_tab": "switch",
+                            "go_to_url": "navigate",
+                            "click_element": "click",
+                            "input_text": "input",
+                        }
+                        if action_name in action_name_aliases:
+                            logger.debug(f"Mapping action alias: {action_name} -> {action_name_aliases[action_name]}")
+                            action_name = action_name_aliases[action_name]
+                        
+                        # Get param model from registry (browser-use pattern)
+                        if action_name not in tools.registry.registry.actions:
+                            logger.warning(f"Unknown action: {action_name}, skipping")
+                            continue
+                        
+                        action_info = tools.registry.registry.actions[action_name]
+                        param_model = action_info.param_model
+                        
+                        try:
+                            # Validate params using param model (browser-use pattern)
+                            validated_params = param_model(**params) if isinstance(params, dict) else param_model(params)
+                            
+                            # Convert to our simple format for LangGraph state
+                            # Browser-use uses ActionModel(**{action_name: validated_params})
+                            # We convert to simple dict format: {"action": "click", "index": 1800}
+                            converted_action = {
+                                "action": action_name,  # Use browser-use action name
+                                "reasoning": "Browser-use validated action"
+                            }
+                            
+                            # Add params to converted action
+                            if isinstance(validated_params, dict):
+                                converted_action.update(validated_params)
+                            else:
+                                # Params is a Pydantic model, convert to dict
+                                params_dict = validated_params.model_dump() if hasattr(validated_params, 'model_dump') else {}
+                                converted_action.update(params_dict)
+                            
+                            planned_actions.append(converted_action)
+                            logger.debug(f"Converted action: {converted_action}")
+                        except Exception as e:
+                            logger.warning(f"Failed to validate action {action_name} with params {params}: {e}")
+                            continue
         except Exception as e:
-            logger.debug(f"Could not extract structured fields from LLM response: {e}")
+            logger.error(f"Failed to parse LLM response: {e}", exc_info=True)
+            # Fallback to old parser
+            planned_actions = parse_llm_action_plan(response_content)
+        
+        logger.debug(f"Parsed {len(planned_actions)} actions: {planned_actions}")
         
         # Save parsed actions
         log_data["parsed_actions"] = planned_actions
@@ -583,7 +684,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                         "completed": True,
                         "browser_state_summary": browser_state_summary,
                         "dom_selector_map": selector_map,
-                        "history": existing_history + [{
+                        "history": [{  # operator.add will append to existing
                             "step": step_count,
                             "node": "think",
                             "planned_actions": [],
@@ -618,7 +719,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                 "dom_selector_map": selector_map,  # Cache for ACT node
                 "previous_url": current_url,  # Store for next step comparison
                 "previous_element_count": len(selector_map),  # Store for next step comparison
-                "history": state.get("history", []) + [{
+                "history": [{  # operator.add will append to existing
                     "step": step_count,
                     "node": "think",
                     "planned_actions": planned_actions,
@@ -630,19 +731,6 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         
         # Validate actions
         valid_actions = []
-        # CRITICAL: Check if LLM planned switch together with other actions (violates system prompt guidance)
-        switch_actions = [a for a in planned_actions if isinstance(a, dict) and a.get("action") in ("switch", "switch_tab")]
-        other_actions = [a for a in planned_actions if isinstance(a, dict) and a.get("action") not in ("switch", "switch_tab", "done")]
-        if switch_actions and other_actions:
-            logger.warning(f"⚠️ LLM planned switch together with other actions - this violates system prompt guidance!")
-            logger.warning(f"   Switch actions: {switch_actions}")
-            logger.warning(f"   Other actions: {other_actions}")
-            logger.warning(f"   System prompt says: Plan ONLY switch first, then see new page DOM before planning other actions")
-            print(f"\n⚠️  WARNING: LLM planned switch together with other actions:")
-            print(f"   Switch: {switch_actions}")
-            print(f"   Other: {other_actions}")
-            print(f"   This may fail because element indices are from the OLD tab, not the new one!")
-        
         for action in planned_actions:
             if validate_action(action):
                 valid_actions.append(action)
@@ -715,7 +803,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             "planned_actions": valid_actions,
             "browser_state_summary": browser_state_summary,
             "dom_selector_map": selector_map,  # Cache for ACT node element lookups
-            "history": existing_history + [new_history_entry],  # Return new list
+            "history": [new_history_entry],  # operator.add will append to existing
             "current_goal": current_goal,
             "previous_url": current_url,  # Track URL for next step to detect tab/URL changes
             "previous_element_count": len(selector_map),  # Track element count for dynamic loading detection
@@ -726,6 +814,11 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             state_updates["just_switched_tab"] = False
             state_updates["tab_switch_url"] = None
             state_updates["tab_switch_title"] = None
+        
+        # Clear fresh_state_available flag after using it (so it doesn't persist)
+        if fresh_state_available:
+            state_updates["fresh_state_available"] = False
+            state_updates["page_changed"] = False
         
         return state_updates
     except Exception as e:
