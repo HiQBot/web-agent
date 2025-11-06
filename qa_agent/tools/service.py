@@ -520,13 +520,31 @@ class Tools(Generic[Context]):
 		# Tab Management Actions
 
 		@self.registry.action(
-			'Switch to another open tab by tab_id. Tab IDs are shown in browser state tabs list (last 4 chars of target_id). Use when you need to work with content in a different tab.',
+			'Switch to another open tab by tab_id. Tab IDs are shown in browser state tabs list (last 4 chars of target_id). Use "new" to switch to most recent tab. Use when you need to work with content in a different tab.',
 			param_model=SwitchTabAction,
 		)
 		async def switch(params: SwitchTabAction, browser_session: BrowserSession):
-			# Simple switch tab logic
+			# Handle special "new" keyword for most recent tab
 			try:
-				target_id = await browser_session.get_target_id_from_tab_id(params.tab_id)
+				if params.tab_id.lower() == "new":
+					# Get most recent tab from browser state
+					state = await browser_session.get_browser_state_summary(
+						include_screenshot=False,
+						cached=False
+					)
+					if state.tabs and len(state.tabs) > 0:
+						# Get the last tab (most recently opened)
+						most_recent_tab = state.tabs[-1]
+						target_id = most_recent_tab.target_id
+						logger.info(f'🔄 "new" keyword resolved to tab #{target_id[-4:]} ({most_recent_tab.title})')
+					else:
+						return ActionResult(
+							error="No tabs available to switch to",
+							extracted_content="No tabs available"
+						)
+				else:
+					# Normal 4-char tab_id lookup
+					target_id = await browser_session.get_target_id_from_tab_id(params.tab_id)
 
 				event = browser_session.event_bus.dispatch(SwitchTabEvent(target_id=target_id))
 				await event
@@ -600,8 +618,14 @@ class Tools(Generic[Context]):
 				content, content_stats = await extract_clean_markdown(
 					browser_session=browser_session, extract_links=extract_links
 				)
+			except ModuleNotFoundError as e:
+				logger.error(f'ModuleNotFoundError in extract_clean_markdown: {e}')
+				logger.error(f'Missing module: {e.name if hasattr(e, "name") else "unknown"}')
+				logger.error(f'Full error: {str(e)}', exc_info=True)
+				raise RuntimeError(f'Could not extract clean markdown - missing module: {e.name if hasattr(e, "name") else str(e)}')
 			except Exception as e:
-				raise RuntimeError(f'Could not extract clean markdown: {type(e).__name__}')
+				logger.error(f'Error extracting clean markdown: {type(e).__name__}: {str(e)}', exc_info=True)
+				raise RuntimeError(f'Could not extract clean markdown: {type(e).__name__}: {str(e)}')
 
 			# Original content length for processing
 			final_filtered_length = content_stats['final_filtered_chars']
@@ -673,14 +697,19 @@ You will be given a query and the markdown of a webpage that has been filtered t
 			prompt = f'<query>\n{query}\n</query>\n\n<content_stats>\n{stats_summary}\n</content_stats>\n\n<webpage_content>\n{content}\n</webpage_content>'
 
 			try:
+				# Use LangChain's message types for compatibility with BaseChatModel
+				from langchain_core.messages import SystemMessage as LCSystemMessage, HumanMessage as LCHumanMessage
+
 				response = await asyncio.wait_for(
-					page_extraction_llm.ainvoke([SystemMessage(content=system_prompt), UserMessage(content=prompt)]),
+					page_extraction_llm.ainvoke([LCSystemMessage(content=system_prompt), LCHumanMessage(content=prompt)]),
 					timeout=120.0,
 				)
 
 				current_url = await browser_session.get_current_page_url()
+				# LangChain response has .content attribute, not .completion
+				response_text = response.content if hasattr(response, 'content') else str(response)
 				extracted_content = (
-					f'<url>\n{current_url}\n</url>\n<query>\n{query}\n</query>\n<result>\n{response.completion}\n</result>'
+					f'<url>\n{current_url}\n</url>\n<query>\n{query}\n</query>\n<result>\n{response_text}\n</result>'
 				)
 
 				# Simple memory handling
@@ -700,8 +729,22 @@ You will be given a query and the markdown of a webpage that has been filtered t
 					long_term_memory=memory,
 				)
 			except Exception as e:
-				logger.debug(f'Error extracting content: {e}')
-				raise RuntimeError(str(e))
+				# Enhanced error logging for extract action failures
+				logger.error(f'❌ Extract action failed!')
+				logger.error(f'   Query: {query}')
+				logger.error(f'   Error type: {type(e).__name__}')
+				logger.error(f'   Error message: {str(e)}')
+				logger.error(f'   Content stats: {content_stats}')
+				if hasattr(e, '__traceback__'):
+					import traceback
+					logger.error(f'   Traceback:\n{"".join(traceback.format_tb(e.__traceback__))}')
+
+				# Log the LLM response if available
+				if 'response' in locals():
+					response_preview = str(response)[:500] if response else 'No response'
+					logger.error(f'   LLM response preview: {response_preview}')
+
+				raise RuntimeError(f'Extract failed for query "{query}": {type(e).__name__}: {str(e)}')
 
 		@self.registry.action(
 			"""Scroll by pages (down=True/False, pages=0.5-10.0, default 1.0). Use index for scroll containers (dropdowns/custom UI). High pages (10) reaches bottom. Multi-page scrolls sequentially. Viewport-based height, fallback 1000px/page.""",

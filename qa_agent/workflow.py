@@ -34,15 +34,11 @@ def should_continue(state: QAAgentState) -> Literal["continue", "retry", "done"]
             return "done"
         
         # Check max steps (infinite loop prevention)
-        # CRITICAL: Stop early to avoid hitting LangGraph's recursion limit (25)
         step_count = state.get("step_count", 0)
         max_steps = state.get("max_steps", settings.max_steps)
-        
-        # Stop at 20 steps to leave room for LangGraph's recursion limit (25)
-        effective_max = min(max_steps, 20)  # Cap at 20 to avoid recursion limit
-        
-        if step_count >= effective_max:
-            logger.warning(f"Max steps reached: {step_count}/{effective_max} (original max: {max_steps})")
+
+        if step_count >= max_steps:
+            logger.warning(f"Max steps reached: {step_count}/{max_steps}")
             return "done"
         
         # Check verification status
@@ -100,15 +96,11 @@ def should_continue_after_think(state: QAAgentState) -> Literal["continue", "don
             return "done"
         
         # Infinite loop prevention
-        # CRITICAL: Stop early to avoid hitting LangGraph's recursion limit (25)
         step_count = state.get("step_count", 0)
         max_steps = state.get("max_steps", settings.max_steps)
-        
-        # Stop at 20 steps to leave room for LangGraph's recursion limit (25)
-        effective_max = min(max_steps, 20)  # Cap at 20 to avoid recursion limit
-        
-        if step_count >= effective_max:
-            logger.warning(f"Max steps reached in think router: {step_count}/{effective_max} (original max: {max_steps})")
+
+        if step_count >= max_steps:
+            logger.warning(f"Max steps reached in think router: {step_count}/{max_steps}")
             return "done"
         
         # If we have planned actions, continue to act

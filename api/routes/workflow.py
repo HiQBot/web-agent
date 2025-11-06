@@ -71,10 +71,13 @@ async def run_task(request: TaskRequest):
         # Get workflow
         workflow = get_workflow()
         
-        # Run workflow (async)
-        # Note: We rely on our own max_steps check in should_continue() routers
-        # LangGraph's default recursion limit (25) will be sufficient as a safety net
-        result = await workflow.ainvoke(initial_state)
+        # Run workflow with higher recursion limit
+        # Each workflow cycle (verify→think→act→verify) consumes ~3 LangGraph recursions
+        # So for 50 max_steps, we need ~150 recursion limit (50 * 3) + buffer
+        result = await workflow.ainvoke(
+            initial_state,
+            config={"recursion_limit": 200}  # High limit for complex multi-step workflows
+        )
         
         # Return result
         return TaskResponse(

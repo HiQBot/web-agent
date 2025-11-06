@@ -147,12 +147,26 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                             # BUT mark that we just switched tabs so think node knows to treat this as a fresh page
                             new_tab_id = None
                             new_tab_url = None
-                            
+
                             # Mark that we just switched tabs - think node should treat this as a fresh page state
                             # This ensures LLM understands it's seeing a NEW page structure
                             state_updates["just_switched_tab"] = True
                             state_updates["tab_switch_url"] = fresh_state.url if 'fresh_state' in locals() else None
                             state_updates["tab_switch_title"] = fresh_state.title if 'fresh_state' in locals() else None
+
+                            # Add tab switch event to history for LLM visibility
+                            # This creates a clear signal in agent_history that page context has changed
+                            existing_history = state.get("history", [])
+                            tab_switch_history_entry = {
+                                "step": state.get("step_count", 0),
+                                "node": "verify_tab_switch",
+                                "action_results": [{
+                                    "extracted_content": f"🔄 TAB SWITCHED - Now on NEW PAGE: {fresh_state.title} ({fresh_state.url})",
+                                    "long_term_memory": f"Switched to tab #{tab_id_4char}. New page: {fresh_state.title}",
+                                    "success": True
+                                }]
+                            }
+                            state_updates["history"] = existing_history + [tab_switch_history_entry]
             except Exception as e:
                 logger.warning(f"Error switching to new tab: {e}", exc_info=True)
         

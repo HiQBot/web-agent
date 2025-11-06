@@ -111,10 +111,23 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         
         # Check if verify node just switched tabs (browser-use pattern: fresh state is automatically sent)
         # The browser_state already contains all elements from the new page - LLM will analyze dynamically
+        tab_switch_system_message = None
         if just_switched_tab:
             logger.info(f"🔄 DETECTED TAB SWITCH - Fresh browser state retrieved: {tab_switch_title} ({tab_switch_url})")
             logger.info(f"   Interactive elements available: {len(selector_map)}")
             logger.info("   LLM will analyze browser_state and adapt actions based on current page structure.")
+
+            # Create system message to inject into agent_history
+            # This will make the LLM explicitly aware that it's on a new page
+            tab_switch_system_message = (
+                f"<sys>🔄 TAB SWITCH DETECTED: You are now on a COMPLETELY NEW PAGE.\n"
+                f"- New URL: {tab_switch_url}\n"
+                f"- New Title: {tab_switch_title}\n"
+                f"- Available elements: {len(selector_map)} interactive elements\n"
+                f"CRITICAL: The <browser_state> below shows THIS new page's elements with NEW indices.\n"
+                f"DO NOT reuse element indices from previous steps - they are from the OLD page.\n"
+                f"ANALYZE the CURRENT page structure FIRST before deciding your next action.</sys>"
+            )
         
         # Check if last step was a verification failure
         if history:
@@ -326,11 +339,25 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                             # Human QA approach: Look at what's on the page NOW, then pick the right element
                             step_content_parts.append("⚠️ RETRY: The previous action failed. Please review the CURRENT <browser_state> above to see what elements are actually available on this page. Element indices may have changed - use the indices shown in the current browser_state, not from previous steps.")
                 
+                # Handle tab switch history entries (verify_tab_switch node)
+                # These are system messages injected by verify node when tabs switch
+                if node == "verify_tab_switch":
+                    action_results = step_entry.get("action_results", [])
+                    for result in action_results:
+                        extracted_content = result.get("extracted_content", "")
+                        if extracted_content:
+                            step_content_parts.append(f'Result\n{extracted_content}')
+
                 # Format as browser-use HistoryItem: <step_N>...</step_N>
                 if step_content_parts:
                     content = '\n'.join(step_content_parts)
                     agent_history_description += f'<step_{step_num}>\n{content}\n</step_{step_num}>\n'
-        
+
+        # Inject tab switch system message if we just switched tabs
+        # This ensures LLM sees the warning BEFORE processing the new browser_state
+        if tab_switch_system_message:
+            agent_history_description += f'\n{tab_switch_system_message}\n'
+
         # Clean up read_state_description
         read_state_description = read_state_description.strip('\n') if read_state_description else None
 
@@ -349,10 +376,17 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         # The LLM can see all interactive elements and their indices, so it can adapt dynamically
         enhanced_task = task
         
+        # Create file system for extract() action support
+        # Browser-use pattern: FileSystem handles saving extracted content to files
+        from qa_agent.filesystem.file_system import FileSystem
+        from pathlib import Path
+        file_system_dir = Path("qa_agent_workspace") / f"session_{browser_session_id[:8]}"
+        file_system = FileSystem(base_dir=file_system_dir, create_default_files=True)
+
         # Create AgentMessagePrompt (uses BrowserStateSummary directly!)
         agent_message_prompt = AgentMessagePrompt(
             browser_state_summary=browser_state,  # Pass the actual BrowserStateSummary object
-            file_system=None,  # TODO: Add file system support later
+            file_system=file_system,  # FileSystem for extract() action and file operations
             agent_history_description=agent_history_description,
             read_state_description=read_state_description,  # Extract() results (browser-use pattern)
             task=enhanced_task,  # Use enhanced task with tab switch context if applicable
@@ -509,19 +543,20 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             print(f"  {i}. {action}")
         
         # Check for "done" action from LLM (supports both "action" and "type" keys)
+        # Filter out non-dict actions (parser may return strings from malformed responses)
         has_done_action = any(
-            action.get("action") == "done" or action.get("type") == "done"
+            isinstance(action, dict) and (action.get("action") == "done" or action.get("type") == "done")
             for action in planned_actions
         )
-        
+
         # Get existing history early (needed for multiple return paths)
         existing_history = state.get("history", [])
-        
+
         # Browser-use pattern: Title and URL are ALREADY in browser_state (<browser_state>)
-        # System prompt says: "Call extract only if the information you are looking for is not visible 
+        # System prompt says: "Call extract only if the information you are looking for is not visible
         # in your <browser_state> otherwise always just use the needed text from the <browser_state>."
         # So if LLM tries to extract title/URL, auto-complete since they're already available
-        extract_actions = [a for a in planned_actions if a.get("action") == "extract"]
+        extract_actions = [a for a in planned_actions if isinstance(a, dict) and a.get("action") == "extract"]
         for extract_action in extract_actions:
             query = str(extract_action.get("query", "")).lower()
             # Check if query asks for title/URL (which are already in browser state)
@@ -595,6 +630,19 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         
         # Validate actions
         valid_actions = []
+        # CRITICAL: Check if LLM planned switch together with other actions (violates system prompt guidance)
+        switch_actions = [a for a in planned_actions if isinstance(a, dict) and a.get("action") in ("switch", "switch_tab")]
+        other_actions = [a for a in planned_actions if isinstance(a, dict) and a.get("action") not in ("switch", "switch_tab", "done")]
+        if switch_actions and other_actions:
+            logger.warning(f"⚠️ LLM planned switch together with other actions - this violates system prompt guidance!")
+            logger.warning(f"   Switch actions: {switch_actions}")
+            logger.warning(f"   Other actions: {other_actions}")
+            logger.warning(f"   System prompt says: Plan ONLY switch first, then see new page DOM before planning other actions")
+            print(f"\n⚠️  WARNING: LLM planned switch together with other actions:")
+            print(f"   Switch: {switch_actions}")
+            print(f"   Other: {other_actions}")
+            print(f"   This may fail because element indices are from the OLD tab, not the new one!")
+        
         for action in planned_actions:
             if validate_action(action):
                 valid_actions.append(action)

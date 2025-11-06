@@ -61,7 +61,7 @@ class StructuredOutputAction(BaseModel, Generic[T]):
 
 
 class SwitchTabAction(BaseModel):
-	tab_id: str = Field(min_length=4, max_length=4, description='4-char id')
+	tab_id: str = Field(min_length=3, max_length=4, description='4-char tab id or "new" for most recent tab')
 
 
 class CloseTabAction(BaseModel):

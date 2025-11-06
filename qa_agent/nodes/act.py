@@ -112,11 +112,23 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 				page_extraction_llm = get_llm()
 				logger.info(f"Extract action detected - providing page_extraction_llm to Tools.act()")
 			
+			# Get file_system from state (created in think node)
+			file_system = None
+			if action_type == "extract" or action_type in ["write_file", "read_file", "replace_file"]:
+				# File system is needed for extract and file operations
+				# It's created fresh in each think cycle
+				from qa_agent.filesystem.file_system import FileSystem
+				from pathlib import Path
+				browser_session_id = state.get("browser_session_id", "unknown")
+				file_system_dir = Path("qa_agent_workspace") / f"session_{browser_session_id[:8]}"
+				file_system = FileSystem(base_dir=file_system_dir, create_default_files=False)  # Don't recreate files
+
 			logger.info(f"Executing {action_type} via Tools.act()")
 			result = await tools.act(
 				action=action_model,
 				browser_session=session,
 				page_extraction_llm=page_extraction_llm,  # Required for extract actions
+				file_system=file_system,  # Required for extract and file operations
 			)
 
 			# Extract all result data (browser-use ActionResult fields)

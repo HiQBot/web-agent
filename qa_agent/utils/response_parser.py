@@ -49,6 +49,23 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
                     "index": int(action_params),
                     "reasoning": "Browser-use shorthand hover (converted to click)"
                 })
+            elif action_type == "switch" or action_type == "switch_tab":
+                # Shorthand switch: {"switch": "E33D"}
+                converted.append({
+                    "action": "switch",  # Browser-use function name
+                    "tab_id": str(action_params),
+                    "reasoning": "Browser-use shorthand switch tab"
+                })
+            elif action_type == "navigate" or action_type == "go_to_url":
+                # Shorthand navigate: {"navigate": "https://..."}
+                converted.append({
+                    "action": "navigate",
+                    "url": str(action_params),
+                    "reasoning": "Browser-use shorthand navigate"
+                })
+            elif action_type == "input" or action_type == "input_text":
+                # Shorthand input: {"input": "text"} - but this needs an index, so warn
+                logger.warning(f"Shorthand input without index, skipping: {action_params}")
             else:
                 logger.warning(f"Unknown shorthand action type: {action_type}, skipping")
             continue
@@ -146,12 +163,25 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
             })
         elif action_type == "extract":
             # Handle different extract formats from LLM
-            # LLM sometimes uses "attributes" instead of "elements"
+            # LLM sometimes uses "attributes", "info", or "elements"
             query = action_params.get("query", "")
-            elements = action_params.get("elements") or action_params.get("attributes", [])
+            elements = action_params.get("elements") or action_params.get("attributes", []) or action_params.get("info", [])
             text = action_params.get("text", False)
             url = action_params.get("url", False)
-            
+
+            # Handle when LLM outputs query as a dict: {"query": {"title": "...", "url": "..."}}
+            if isinstance(query, dict):
+                # Extract what the LLM wants
+                query_keys = list(query.keys())
+                if "title" in query_keys and "url" in query_keys:
+                    query = "extract the page title and URL"
+                elif "title" in query_keys:
+                    query = "extract the page title"
+                elif "url" in query_keys:
+                    query = "extract the page URL"
+                else:
+                    query = f"extract {', '.join(query_keys)}"
+
             # If LLM wants title/URL, these are already in browser state - convert to appropriate query
             if elements and isinstance(elements, list):
                 if "title" in elements and "url" in elements:
