@@ -599,7 +599,45 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                         
                         try:
                             # Validate params using param model (browser-use pattern)
-                            validated_params = param_model(**params) if isinstance(params, dict) else param_model(params)
+                            # Handle shorthand formats (e.g., {"wait": 1} or {"scroll": 0.5})
+                            if not isinstance(params, dict):
+                                # Convert shorthand format to dict (browser-use pattern)
+                                if action_name == "wait":
+                                    # Shorthand: {"wait": 1} -> {"wait": {"seconds": 1}}
+                                    params = {"seconds": int(params)}
+                                    logger.debug(f"Converted shorthand wait action: {params}")
+                                elif action_name == "scroll":
+                                    # Shorthand: {"scroll": 0.5} -> {"scroll": {"pages": 0.5, "down": True}}
+                                    params = {"pages": float(params), "down": True}
+                                    logger.debug(f"Converted shorthand scroll action: {params}")
+                                elif action_name in ["click", "input"]:
+                                    # Shorthand: {"click": 1234} -> {"click": {"index": 1234}}
+                                    params = {"index": int(params)}
+                                    logger.debug(f"Converted shorthand {action_name} action: {params}")
+                                elif action_name in ["switch", "switch_tab"]:
+                                    # Shorthand: {"switch": "new"} -> {"switch": {"tab_id": "new"}}
+                                    params = {"tab_id": str(params)}
+                                    logger.debug(f"Converted shorthand switch action: {params}")
+                                elif action_name in ["navigate", "go_to_url"]:
+                                    # Shorthand: {"navigate": "https://..."} -> {"navigate": {"url": "https://..."}}
+                                    params = {"url": str(params)}
+                                    logger.debug(f"Converted shorthand navigate action: {params}")
+                                else:
+                                    logger.warning(f"Unknown shorthand format for {action_name} with params {params}, skipping")
+                                    continue
+                            
+                            # Handle missing required fields with defaults (e.g., scroll action needs 'down' field)
+                            if isinstance(params, dict):
+                                # Check if this is a scroll action and 'down' is missing
+                                if action_name == "scroll" and "down" not in params:
+                                    params = params.copy()
+                                    params["down"] = True  # Default to scroll down
+                                    logger.debug(f"Added default 'down=True' to scroll action params")
+                                validated_params = param_model(**params)
+                            else:
+                                # Should not reach here after shorthand conversion above
+                                logger.warning(f"Params is not a dict after conversion: {type(params)}, skipping")
+                                continue
                             
                             # Convert to our simple format for LangGraph state
                             # Browser-use uses ActionModel(**{action_name: validated_params})
