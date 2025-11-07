@@ -1070,6 +1070,79 @@ class DOMTreeSerializer:
 							attributes_to_include['placeholder'] = 'mm/dd/yyyy'
 							attributes_to_include['format'] = 'mm/dd/yyyy'
 
+			# Currency format detection for numeric/price input fields
+			# Check if this is a price/numeric field that might have currency requirements
+			if input_type in ['number', 'text']:
+				field_name = (node.attributes.get('name', '') or '').lower()
+				field_id = (node.attributes.get('id', '') or '').lower()
+				placeholder_text = (node.attributes.get('placeholder', '') or '').lower()
+				aria_label = (node.attributes.get('aria-label', '') or '').lower()
+				
+				# Check if field name/ID suggests it's a price field
+				is_price_field = any(keyword in field_name or keyword in field_id for keyword in ['price', 'cost', 'amount', 'fee', 'payment', 'salary', 'wage', 'rent'])
+				
+				# Common currency codes and symbols
+				currency_codes = ['pkr', 'usd', 'eur', 'gbp', 'inr', 'cad', 'aud', 'jpy', 'cny', 'rsd', 'bdt']
+				currency_symbols = ['$', '€', '£', '¥', '₹', '₨', 'rs', 'rs.']
+				
+				# Check placeholder/aria-label for currency hints
+				currency_in_placeholder = any(code in placeholder_text or symbol in placeholder_text for code in currency_codes for symbol in currency_symbols)
+				currency_in_aria = any(code in aria_label or symbol in aria_label for code in currency_codes for symbol in currency_symbols)
+				
+				# Check parent's children for nearby currency text (like <p>PKR</p> before input)
+				currency_from_siblings = None
+				if node.parent:
+					parent_children = node.parent.children
+					# Look for currency in sibling text nodes or elements (check up to 3 siblings before)
+					for i, sibling in enumerate(parent_children):
+						if sibling == node:
+							# Check previous siblings (up to 3 before this input)
+							for prev_sibling in parent_children[max(0, i-3):i]:
+								if prev_sibling.node_type == NodeType.TEXT_NODE:
+									sibling_text = (prev_sibling.node_value or '').strip().upper()
+									for code in currency_codes:
+										if code.upper() in sibling_text:
+											currency_from_siblings = code.upper()
+											break
+								elif prev_sibling.node_type == NodeType.ELEMENT_NODE:
+									# Check if it's a text container element
+									if prev_sibling.tag_name and prev_sibling.tag_name.lower() in ['p', 'span', 'label', 'div']:
+										sibling_text = (prev_sibling.get_all_children_text() or '').strip().upper()
+										for code in currency_codes:
+											if code.upper() in sibling_text:
+												currency_from_siblings = code.upper()
+												break
+								if currency_from_siblings:
+									break
+							break
+				
+				# Extract currency from placeholder/aria-label if found
+				detected_currency = None
+				if currency_in_placeholder:
+					for code in currency_codes:
+						if code in placeholder_text:
+							detected_currency = code.upper()
+							break
+				elif currency_in_aria:
+					for code in currency_codes:
+						if code in aria_label:
+							detected_currency = code.upper()
+							break
+				elif currency_from_siblings:
+					detected_currency = currency_from_siblings
+				
+				# If currency detected and it's a price field, add currency_format attribute
+				if detected_currency and (is_price_field or currency_in_placeholder or currency_in_aria or currency_from_siblings):
+					# Add currency_format attribute prominently (similar to date format)
+					attributes_to_include['currency_format'] = detected_currency
+					# Also update placeholder to include currency hint if not already present
+					if 'placeholder' in include_attributes and 'placeholder' not in attributes_to_include:
+						attributes_to_include['placeholder'] = f'Enter amount in {detected_currency} (numbers only)'
+					elif 'placeholder' in attributes_to_include and detected_currency not in attributes_to_include['placeholder'].upper():
+						# Append currency hint to existing placeholder
+						existing_placeholder = attributes_to_include['placeholder']
+						attributes_to_include['placeholder'] = f'{existing_placeholder} ({detected_currency})'
+
 		# Include accessibility properties
 		if node.ax_node and node.ax_node.properties:
 			for prop in node.ax_node.properties:
@@ -1115,7 +1188,7 @@ class DOMTreeSerializer:
 			seen_values = {}
 
 			# Attributes that should never be removed as duplicates (they serve distinct purposes)
-			protected_attrs = {'format', 'expected_format', 'placeholder', 'value', 'aria-label', 'title'}
+			protected_attrs = {'format', 'expected_format', 'currency_format', 'placeholder', 'value', 'aria-label', 'title'}
 
 			for key in ordered_keys:
 				value = attributes_to_include[key]

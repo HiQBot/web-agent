@@ -52,6 +52,7 @@ DEFAULT_INCLUDE_ATTRIBUTES = [
 	'data-datepicker',  # jQuery datepicker indicator
 	'format',  # Synthetic attribute for date/time input format (e.g., MM/dd/yyyy)
 	'expected_format',  # Synthetic attribute for explicit expected format (e.g., AngularJS datepickers)
+	'currency_format',  # Synthetic attribute for currency format (e.g., PKR, USD) - extracted from nearby elements
 	'contenteditable',  # Rich text editor detection
 	# Webkit shadow DOM identifiers
 	'pseudo',
