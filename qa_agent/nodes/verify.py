@@ -166,7 +166,7 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                                     "success": True
                                 }]
                             }
-                            state_updates["history"] = existing_history + [tab_switch_history_entry]
+                            state_updates["history"] = [tab_switch_history_entry]  # operator.add will append (LangGraph reducer pattern)
             except Exception as e:
                 logger.warning(f"Error switching to new tab: {e}", exc_info=True)
         
@@ -223,6 +223,96 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
         
         verification_status = "pass" if all_passed else "fail"
         
+        # CRITICAL: Compulsory LLM-driven todo.md update (browser-use style but mandatory)
+        # Use LLM to intelligently update todo.md based on verified actions
+        # No hardcoded keywords - LLM semantically matches actions to steps
+        file_system = None
+        file_system_state = state.get("file_system_state")
+        steps_marked_complete = 0
+        
+        if verification_status == "pass" and file_system_state:
+            try:
+                import re
+                from qa_agent.filesystem.file_system import FileSystem
+                file_system = FileSystem.from_state(file_system_state)
+                
+                # Get executed actions from state to match with todo steps
+                executed_actions = state.get("executed_actions", [])
+                
+                # Update todo.md based on successful verification using LLM intelligence (compulsory)
+                todo_content = file_system.get_todo_contents()
+                if todo_content and todo_content != '[empty todo.md, fill it when applicable]' and executed_actions:
+                    # Parse current todo.md to get steps
+                    todo_lines = todo_content.split('\n')
+                    todo_steps = []
+                    for line in todo_lines:
+                        line_stripped = line.strip()
+                        if line_stripped.startswith('- [ ]') or line_stripped.startswith('- [x]') or line_stripped.startswith('- [X]'):
+                            # Extract step text (remove checkbox)
+                            step_text = re.sub(r'^- \[[xX ]\]\s*', '', line_stripped)
+                            if step_text:
+                                todo_steps.append(step_text)
+                    
+                    # Use LLM to intelligently match verified actions to todo steps (compulsory, LLM-driven)
+                    if todo_steps:
+                        from qa_agent.utils.llm_todo_updater import llm_match_actions_to_todo_steps, update_todo_md_content
+                        from qa_agent.llm import get_llm
+                        
+                        # Get LLM for todo matching
+                        todo_llm = get_llm()
+                        
+                        # LLM analyzes verified actions and determines which steps are complete
+                        completed_indices = await llm_match_actions_to_todo_steps(
+                            executed_actions=executed_actions,
+                            todo_steps=todo_steps,
+                            llm=todo_llm,
+                        )
+                        
+                        # Update todo.md content using replace_file (browser-use style)
+                        if completed_indices:
+                            # Use replace_file_str to update checkboxes (browser-use pattern)
+                            # Need to match exact lines from todo_content, accounting for whitespace
+                            for step_idx in completed_indices:
+                                if step_idx < len(todo_steps):
+                                    step_text = todo_steps[step_idx]
+                                    
+                                    # Find the exact line in todo_content (handle whitespace variations)
+                                    # Search for the line that contains this step text
+                                    for line in todo_lines:
+                                        line_stripped = line.strip()
+                                        # Check if this line contains the step text and is unchecked
+                                        if (line_stripped.startswith('- [ ]') and 
+                                            step_text.strip() in line_stripped):
+                                            # Use the exact line from file (preserves whitespace)
+                                            old_str = line.rstrip()  # Remove trailing newline but keep leading spaces
+                                            # Create new line with checkbox marked
+                                            new_str = line_stripped.replace('- [ ]', '- [x]', 1)
+                                            # Preserve leading whitespace from original line
+                                            leading_spaces = len(line) - len(line.lstrip())
+                                            new_str = ' ' * leading_spaces + new_str
+                                            
+                                            # Use replace_file_str (browser-use method)
+                                            result = await file_system.replace_file_str("todo.md", old_str, new_str)
+                                            if "Successfully" in result:
+                                                steps_marked_complete += 1
+                                                logger.info(f"VERIFY: Marked todo step as complete (browser-use style): {step_text[:50]}")
+                                                break  # Found and updated, move to next step
+                            
+                            if steps_marked_complete > 0:
+                                # Save FileSystem state
+                                file_system_state = file_system.get_state()
+                                logger.info(f"VERIFY: LLM marked {steps_marked_complete} todo step(s) as complete using replace_file (browser-use style)")
+            except Exception as e:
+                logger.warning(f"VERIFY: Failed to update todo.md with LLM: {e}", exc_info=True)
+                # Continue - todo.md update is important but don't break workflow
+        
+        # Persist FileSystem state (always save if we have it)
+        if file_system_state:
+            if "state_updates" not in locals():
+                state_updates = {}
+            state_updates["file_system_state"] = file_system_state
+            logger.debug("Saved FileSystem state in verify_node")
+        
         # Update history - create new list (LangGraph best practice: don't mutate state)
         existing_history = state.get("history", [])
         new_history_entry = {
@@ -240,7 +330,7 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
         state_updates.update({
             "verification_status": verification_status,
             "verification_results": verification_results,
-            "history": existing_history + [new_history_entry],  # Return new list
+            "history": [new_history_entry],  # operator.add will append to existing (LangGraph reducer pattern)
         })
         
         # Clear new_tab_id if we successfully switched (avoid re-switching on next step)

@@ -145,9 +145,110 @@ async def init_node(state: QAAgentState) -> Dict[str, Any]:
 	except Exception as e:
 		logger.debug(f"Could not get initial tab count: {e}")
 
+	# CRITICAL: Compulsory LLM-driven todo.md creation (browser-use style but mandatory)
+	# Use LLM to dynamically parse task and create todo.md structure
+	# No hardcoded keywords - LLM intelligently breaks down any task
+	task = state.get("task", "")
+	file_system_state = None
+	
+	if task:
+		logger.info(f"INIT: Starting todo.md creation for task (length: {len(task)} chars)")
+		try:
+			from qa_agent.filesystem.file_system import FileSystem
+			from qa_agent.utils.llm_task_parser import llm_create_todo_structure
+			from qa_agent.llm import get_llm
+			from pathlib import Path
+			
+			# Create FileSystem for this session
+			file_system_dir = Path("qa_agent_workspace") / f"session_{session_id[:8]}"
+			logger.info(f"INIT: Creating FileSystem at {file_system_dir}")
+			file_system = FileSystem(base_dir=file_system_dir, create_default_files=True)
+			logger.info(f"INIT: FileSystem created, default files: {file_system.list_files()}")
+			
+			# Use LLM to dynamically create todo.md structure (compulsory, LLM-driven)
+			logger.info("INIT: Calling LLM to create todo.md structure...")
+			todo_llm = get_llm()
+			logger.info(f"INIT: LLM instance obtained: {type(todo_llm)}")
+			
+			todo_content = await llm_create_todo_structure(task, todo_llm)
+			logger.info(f"INIT: LLM returned todo content (length: {len(todo_content)} chars)")
+			logger.debug(f"INIT: Todo content preview: {todo_content[:200]}...")
+			
+			# Write todo.md using FileSystem
+			logger.info("INIT: Writing todo.md to FileSystem...")
+			write_result = await file_system.write_file("todo.md", todo_content)
+			logger.info(f"INIT: write_file result: {write_result}")
+			
+			# Verify file was written
+			written_content = file_system.get_todo_contents()
+			if written_content:
+				logger.info(f"INIT: Verified todo.md written (length: {len(written_content)} chars)")
+			else:
+				logger.error("INIT: CRITICAL - todo.md is empty after write!")
+			
+			# Save FileSystem state to persist todo.md
+			file_system_state = file_system.get_state()
+			if file_system_state:
+				logger.info(f"INIT: FileSystem state saved (files: {list(file_system_state.files.keys())})")
+			else:
+				logger.error("INIT: CRITICAL - file_system_state is None!")
+			
+			step_count = len([line for line in todo_content.split('\n') if line.strip().startswith('- [')])
+			logger.info(f"INIT: ✅ LLM created todo.md with {step_count} steps (compulsory, LLM-driven)")
+		except Exception as e:
+			logger.error(f"INIT: ❌ Failed to create todo.md with LLM: {e}", exc_info=True)
+			logger.error(f"INIT: Exception type: {type(e).__name__}, message: {str(e)}")
+			# Fallback: create simple todo.md with basic structure (CRITICAL - must not be empty)
+			try:
+				logger.info("INIT: Attempting fallback todo.md creation...")
+				from qa_agent.filesystem.file_system import FileSystem
+				from pathlib import Path
+				file_system_dir = Path("qa_agent_workspace") / f"session_{session_id[:8]}"
+				file_system = FileSystem(base_dir=file_system_dir, create_default_files=True)
+				
+				# Create a simple todo.md structure as fallback (better than empty)
+				# Extract a simple title from task
+				task_preview = task[:80].replace('\n', ' ') if task else "Complete the task"
+				fallback_todo = f"# Task\n\n## Goal: {task_preview}\n\n## Tasks:\n- [ ] Complete the task\n"
+				write_result = await file_system.write_file("todo.md", fallback_todo)
+				logger.info(f"INIT: Fallback write_file result: {write_result}")
+				
+				# Verify fallback was written
+				written_content = file_system.get_todo_contents()
+				if written_content:
+					logger.info(f"INIT: Verified fallback todo.md written (length: {len(written_content)} chars)")
+				else:
+					logger.error("INIT: CRITICAL - fallback todo.md is empty!")
+				
+				file_system_state = file_system.get_state()
+				if file_system_state:
+					logger.warning(f"INIT: ✅ Created fallback todo.md (LLM creation failed: {str(e)[:50]})")
+					logger.info(f"INIT: Fallback FileSystem state saved (files: {list(file_system_state.files.keys())})")
+				else:
+					logger.error("INIT: CRITICAL - fallback file_system_state is None!")
+			except Exception as e2:
+				logger.error(f"INIT: ❌ Failed to create FileSystem fallback: {e2}", exc_info=True)
+				# Last resort: create empty FileSystem (will have default empty todo.md)
+				try:
+					logger.info("INIT: Attempting last resort FileSystem creation...")
+					file_system_dir = Path("qa_agent_workspace") / f"session_{session_id[:8]}"
+					file_system = FileSystem(base_dir=file_system_dir, create_default_files=True)
+					file_system_state = file_system.get_state()
+					if file_system_state:
+						logger.error(f"INIT: ⚠️ Created FileSystem with default empty todo.md (last resort)")
+						logger.info(f"INIT: Last resort FileSystem state saved (files: {list(file_system_state.files.keys())})")
+					else:
+						logger.error("INIT: CRITICAL - last resort file_system_state is None!")
+				except Exception as e3:
+					logger.error(f"INIT: ❌ Complete failure to create FileSystem: {e3}", exc_info=True)
+					file_system_state = None
+	else:
+		logger.warning("INIT: No task provided, skipping todo.md creation")
+
 	return {
 		"browser_session_id": session_id,
 		"current_url": current_url,
 		"tab_count": tab_count,  # Track tab count for new tab detection
 		"previous_tabs": previous_tabs,  # Track tab IDs for comparison after actions
+		"file_system_state": file_system_state,  # Persist todo.md across nodes
 	}

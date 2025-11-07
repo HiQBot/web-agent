@@ -1,7 +1,7 @@
 """
 Utility functions for QA Agent
 """
-from .response_parser import parse_llm_action_plan, validate_action
+from .response_parser import validate_action  # parse_llm_action_plan removed - using structured output
 from .session_registry import (
 	register_session,
 	unregister_session,
@@ -16,8 +16,7 @@ from .singleton import singleton
 # Import it directly: from qa_agent.utils.browser_manager import create_browser_session
 
 __all__ = [
-	"parse_llm_action_plan",
-	"validate_action",
+	"validate_action",  # parse_llm_action_plan removed - using LangChain structured output
 	"register_session",
 	"unregister_session",
 	"get_session",

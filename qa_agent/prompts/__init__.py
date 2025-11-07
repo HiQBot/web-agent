@@ -1,7 +1,10 @@
 """
 Prompts for QA Agent
-"""
-from .prompt_builder import build_think_prompt
 
-__all__ = ["build_think_prompt"]
+Uses browser-use style prompts (SystemPrompt + AgentMessagePrompt)
+"""
+# Legacy build_think_prompt() has been removed
+# Use browser_use_prompts.SystemPrompt and AgentMessagePrompt instead
+
+__all__ = []
 

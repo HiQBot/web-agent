@@ -45,6 +45,25 @@ async def plan_node(state: QAAgentState) -> Dict[str, Any]:
 	try:
 		task = state.get("task", "")
 
+		# CRITICAL: Preserve file_system_state from INIT node (contains todo.md)
+		file_system_state = state.get("file_system_state")
+		
+		# CRITICAL: Check if goals already exist - PLAN should only run once!
+		# If goals exist, just preserve state and return (no LLM call needed)
+		existing_goals = state.get("goals", [])
+		if existing_goals:
+			logger.info(f"PLAN: Goals already exist ({len(existing_goals)} goals), skipping LLM call")
+			logger.info("PLAN: Preserving existing goals and file_system_state")
+			# CRITICAL: For reducer fields (Annotated), return ONLY new items or omit field
+			# completed_goals has reducer (operator.add), so we return [] (no new items) or omit
+			# goals has NO reducer, so we return full value to replace
+			return {
+				"goals": existing_goals,  # No reducer - return full value to preserve
+				# completed_goals: Omit field - no new goals completed in PLAN node
+				"current_goal_index": state.get("current_goal_index", 0),
+				"file_system_state": file_system_state,  # CRITICAL: Preserve todo.md from INIT
+			}
+
 		logger.info(f"PLAN: Analyzing task for goal extraction...")
 
 		# Simple heuristic: Check if task is complex enough
@@ -52,14 +71,17 @@ async def plan_node(state: QAAgentState) -> Dict[str, Any]:
 		sequencing_words = ["then", "after", "next", "once", "when", "wait"]
 		has_sequencing = any(word in task_lower for word in sequencing_words)
 		is_long_task = len(task) > 400
-
+		
 		if not (has_sequencing or is_long_task):
 			logger.info("PLAN: Simple task, no goal tracking needed")
 			logger.info("PLAN: LLM will handle via todo.md if needed")
+			# CRITICAL: For reducer fields, return [] (no new items) or omit field
+			# completed_goals has reducer - return [] means "no new items to add"
 			return {
-				"goals": [],
-				"completed_goals": [],
+				"goals": [],  # No reducer - replace with empty list
+				"completed_goals": [],  # Reducer field - [] means "no new items" (correct)
 				"current_goal_index": 0,
+				"file_system_state": file_system_state,  # CRITICAL: Preserve todo.md from INIT
 			}
 
 		# Complex task - extract lightweight goals for PAGE STATE detection
@@ -145,26 +167,35 @@ Extract goals now:"""
 					logger.info("PLAN: ✅ LLM will manage detailed steps via todo.md")
 					logger.info("PLAN: ✅ Goals used ONLY for page state-based completion detection")
 
+					# CRITICAL: completed_goals has reducer (operator.add)
+					# Return [] means "no new goals completed" (correct for PLAN node)
 					return {
-						"goals": goals,
-						"completed_goals": [],
+						"goals": goals,  # No reducer - replace with new goals
+						"completed_goals": [],  # Reducer field - [] means "no new items" (correct)
 						"current_goal_index": 0,
+						"file_system_state": file_system_state,  # CRITICAL: Preserve todo.md from INIT
 					}
 			except (json.JSONDecodeError, KeyError) as e:
 				logger.warning(f"PLAN: Could not parse goals: {e}")
 
 		# Fallback: Pure browser-use pattern (no goal tracking)
 		logger.info("PLAN: No goals extracted, using pure browser-use todo.md pattern")
+		# CRITICAL: completed_goals has reducer - return [] means "no new items"
 		return {
-			"goals": [],
-			"completed_goals": [],
+			"goals": [],  # No reducer - replace with empty list
+			"completed_goals": [],  # Reducer field - [] means "no new items" (correct)
 			"current_goal_index": 0,
+			"file_system_state": file_system_state,  # CRITICAL: Preserve todo.md from INIT
 		}
 
 	except Exception as e:
 		logger.error(f"Error in plan node: {e}", exc_info=True)
+		# CRITICAL: Preserve file_system_state even on error
+		file_system_state = state.get("file_system_state")
+		# CRITICAL: completed_goals has reducer - return [] means "no new items"
 		return {
-			"goals": [],
-			"completed_goals": [],
+			"goals": [],  # No reducer - replace with empty list
+			"completed_goals": [],  # Reducer field - [] means "no new items" (correct)
 			"current_goal_index": 0,
+			"file_system_state": file_system_state,  # CRITICAL: Preserve todo.md from INIT
 		}

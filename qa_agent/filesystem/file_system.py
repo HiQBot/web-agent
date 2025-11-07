@@ -217,15 +217,17 @@ class FileSystemState(BaseModel):
 class FileSystem:
 	"""Enhanced file system with in-memory storage and multiple file type support"""
 
-	def __init__(self, base_dir: str | Path, create_default_files: bool = True):
+	def __init__(self, base_dir: str | Path, create_default_files: bool = True, clean_data_dir: bool = True):
 		# Handle the Path conversion before calling super().__init__
 		self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
 		self.base_dir.mkdir(parents=True, exist_ok=True)
 
 		# Create and use a dedicated subfolder for all operations
 		self.data_dir = self.base_dir / DEFAULT_FILE_SYSTEM_PATH
-		if self.data_dir.exists():
-			# clean the data directory
+		# CRITICAL: Only clean data_dir when creating NEW FileSystem, NOT when restoring from state
+		# This preserves todo.md and other files across node transitions
+		if clean_data_dir and self.data_dir.exists():
+			# clean the data directory (only for new FileSystem instances)
 			shutil.rmtree(self.data_dir)
 		self.data_dir.mkdir(exist_ok=True)
 
@@ -567,6 +569,68 @@ class FileSystem:
 		todo_file = self.get_file('todo.md')
 		return todo_file.read() if todo_file else ''
 
+	def get_todo_status(self) -> dict[str, Any]:
+		"""
+		Parse todo.md to extract completion status.
+		Returns dict with counts and status summary.
+		
+		Returns:
+			{
+				"total_items": int,
+				"completed_items": int,
+				"pending_items": int,
+				"completion_ratio": float,  # 0.0 to 1.0
+				"has_todo": bool,
+				"status_summary": str  # Human-readable summary
+			}
+		"""
+		todo_content = self.get_todo_contents()
+		
+		if not todo_content or todo_content == '[empty todo.md, fill it when applicable]':
+			return {
+				"total_items": 0,
+				"completed_items": 0,
+				"pending_items": 0,
+				"completion_ratio": 0.0,
+				"has_todo": False,
+				"status_summary": "No todo.md file or empty"
+			}
+		
+		# Parse markdown checkboxes
+		lines = todo_content.split('\n')
+		total_items = 0
+		completed_items = 0
+		
+		for line in lines:
+			line_stripped = line.strip()
+			# Match both - [x] and - [X] (completed)
+			if line_stripped.startswith('- [x]') or line_stripped.startswith('- [X]'):
+				completed_items += 1
+				total_items += 1
+			# Match - [ ] (pending)
+			elif line_stripped.startswith('- [ ]'):
+				total_items += 1
+		
+		pending_items = total_items - completed_items
+		completion_ratio = completed_items / total_items if total_items > 0 else 0.0
+		
+		# Generate human-readable summary
+		if total_items == 0:
+			status_summary = "No todo items found"
+		elif completed_items == total_items:
+			status_summary = f"✅ All {total_items} items completed"
+		else:
+			status_summary = f"✅ {completed_items}/{total_items} items completed ({pending_items} remaining)"
+		
+		return {
+			"total_items": total_items,
+			"completed_items": completed_items,
+			"pending_items": pending_items,
+			"completion_ratio": completion_ratio,
+			"has_todo": True,
+			"status_summary": status_summary
+		}
+
 	def get_state(self) -> FileSystemState:
 		"""Get serializable state of the file system"""
 		files_data = {}
@@ -584,8 +648,9 @@ class FileSystem:
 	@classmethod
 	def from_state(cls, state: FileSystemState) -> 'FileSystem':
 		"""Restore file system from serializable state at the exact same location"""
-		# Create file system without default files
-		fs = cls(base_dir=Path(state.base_dir), create_default_files=False)
+		# CRITICAL: Don't clean data_dir when restoring from state - preserve existing files
+		# This ensures todo.md persists across node transitions
+		fs = cls(base_dir=Path(state.base_dir), create_default_files=False, clean_data_dir=False)
 		fs.extracted_content_count = state.extracted_content_count
 
 		# Restore all files

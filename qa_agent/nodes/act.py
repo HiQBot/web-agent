@@ -6,6 +6,7 @@ This node:
 2. Initializes Tools instance with BrowserSession
 3. Executes actions via browser-use Tools
 4. Captures action results
+5. Persists FileSystem state (LLM decides when to update todo.md via replace_file action)
 """
 import logging
 from typing import Dict, Any
@@ -87,35 +88,19 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	logger.info("Initializing browser-use Tools")
 	tools = Tools()
 	
-	# Get dynamic ActionModel class from Tools registry (browser-use recommended approach)
-	# This creates ActionModel with all registered actions dynamically from the registry
-	# This ensures we always have the correct action fields matching registered action names
-	DynamicActionModel = tools.registry.create_action_model(page_url=None)
-
+	# planned_actions is already list[ActionModel] from think node
+	# No conversion needed - LangChain with_structured_output() returns validated Pydantic objects
 	# Execute actions sequentially
 	executed_actions = []
 	action_results = []
 
-	for i, action_dict in enumerate(planned_actions, 1):
-		action_type = action_dict.get("action") or action_dict.get("type")
+	for i, action_model in enumerate(planned_actions, 1):
+		# action_model is already ActionModel - get action type from model dump
+		action_dump = action_model.model_dump(exclude_unset=True)
+		action_type = list(action_dump.keys())[0] if action_dump else "unknown"
 		print(f"\n  [{i}/{len(planned_actions)}] Executing: {action_type}")
 
 		try:
-			# Convert our action dict to browser-use ActionModel
-			# Pass tools registry for param model lookups
-			action_model = convert_to_action_model(action_dict, DynamicActionModel, tools.registry)
-
-			if not action_model:
-				logger.warning(f"Could not convert action to ActionModel: {action_dict}")
-				print(f"    ⚠️  Skipping invalid action: {action_type}")
-				action_results.append({
-					"success": False,
-					"action": action_dict,
-					"error": "Invalid action format",
-					"extracted_content": None,
-					"is_done": False,
-				})
-				continue
 
 			# Execute action via browser-use Tools
 			# Browser-use extract action requires page_extraction_llm
@@ -130,12 +115,22 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 			file_system = None
 			if action_type == "extract" or action_type in ["write_file", "read_file", "replace_file"]:
 				# File system is needed for extract and file operations
-				# It's created fresh in each think cycle
+				# CRITICAL: Restore FileSystem from state for todo.md persistence (Phase 1)
 				from qa_agent.filesystem.file_system import FileSystem
 				from pathlib import Path
-				browser_session_id = state.get("browser_session_id", "unknown")
-				file_system_dir = Path("qa_agent_workspace") / f"session_{browser_session_id[:8]}"
-				file_system = FileSystem(base_dir=file_system_dir, create_default_files=False)  # Don't recreate files
+				
+				# Restore FileSystem from state if it exists
+				file_system_state = state.get("file_system_state")
+				if file_system_state:
+					# Restore existing FileSystem from persisted state
+					file_system = FileSystem.from_state(file_system_state)
+					logger.debug("Restored FileSystem from state in act_node (todo.md preserved)")
+				else:
+					# Fallback: Create new FileSystem if state not available
+					browser_session_id = state.get("browser_session_id", "unknown")
+					file_system_dir = Path("qa_agent_workspace") / f"session_{browser_session_id[:8]}"
+					file_system = FileSystem(base_dir=file_system_dir, create_default_files=False)  # Don't recreate files
+					logger.debug("Created new FileSystem in act_node (fallback)")
 
 			logger.info(f"Executing {action_type} via Tools.act()")
 			result = await tools.act(
@@ -160,9 +155,10 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 			print(f"    ✅ {action_type} completed" if success else f"    ❌ {action_type} failed: {error_msg}")
 
 			# Store complete result (all browser-use ActionResult fields)
+			# Store action as dict for history serialization
 			action_results.append({
 				"success": success,
-				"action": action_dict,
+				"action": action_dump,  # Store as dict for JSON serialization
 				"extracted_content": extracted_content,
 				"error": error_msg,
 				"is_done": is_done,
@@ -172,17 +168,17 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 				"metadata": metadata,
 				"success_flag": success_flag,  # Browser-use success flag (None for regular actions)
 			})
-			executed_actions.append(action_dict)
+			executed_actions.append(action_dump)  # Store as dict for later checks
 
 		except Exception as e:
 			# Browser-use pattern: Tools.act() catches BrowserError, TimeoutError, and general exceptions
 			# and returns ActionResult with error field set
-			# If we get here, it's an exception during conversion or Tools initialization
+			# If we get here, it's an exception during action execution
 			logger.error(f"Error executing action {action_type}: {e}", exc_info=True)
 			print(f"    ❌ Exception: {str(e)[:100]}")
 			action_results.append({
 				"success": False,
-				"action": action_dict,
+				"action": action_dump,  # Store as dict for JSON serialization
 				"error": str(e),
 				"extracted_content": None,
 				"is_done": False,
@@ -206,21 +202,22 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	
 	# Clear cache if actions might have changed the page/DOM
 	# Check all executed actions to see if any are page-changing
+	# executed_actions contains action dicts (from action_dump)
 	page_changing_action_types = ["navigate", "switch", "go_back"]
 	dom_changing_action_types = ["click", "input", "scroll"]
-	
+
 	has_page_changing_action = any(
-		a.get("action") in page_changing_action_types 
+		list(a.keys())[0] in page_changing_action_types if a else False
 		for a in executed_actions
 	)
 	has_dom_changing_action = any(
-		a.get("action") in dom_changing_action_types 
+		list(a.keys())[0] in dom_changing_action_types if a else False
 		for a in executed_actions
 	)
-	
+
 	if has_page_changing_action or has_dom_changing_action:
 		# Clear cache for any action that might change DOM
-		action_type = executed_actions[-1].get("action") if executed_actions else "unknown"
+		action_type = list(executed_actions[-1].keys())[0] if executed_actions and executed_actions[-1] else "unknown"
 		await clear_cache_if_needed(session, action_type, previous_url)
 	
 	# Wait for network idle and DOM stability (browser-use pattern from DOMWatchdog)
@@ -328,7 +325,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	return_state = {
 		"executed_actions": executed_actions,
 		"action_results": action_results,
-		"history": existing_history + [new_history_entry],
+		"history": [new_history_entry],  # operator.add will append to existing (LangGraph reducer pattern)
 		"consecutive_failures": consecutive_failures,  # NEW: Track failure count (browser-use pattern)
 		"tab_count": len(current_tab_ids) if 'current_tab_ids' in locals() else state.get("tab_count", 1),
 		"previous_tabs": previous_tabs,  # Track tabs for next comparison
@@ -358,189 +355,167 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 		logger.info(f"💾 Marked explicit tab switch in state - think node will provide enhanced context")
 		logger.info(f"   Switch context: {current_title} ({current_url})")
 	
+	# CRITICAL: Update todo.md based on successful actions (moved from VERIFY since it's never called)
+	# Use LLM to intelligently match successful actions to todo steps
+	file_system_state = state.get("file_system_state")
+	steps_marked_complete = 0
+	
+	# Check if we have successful actions and todo.md to update
+	# Filter for successful actions only (actions that completed without errors)
+	successful_actions = [r for r in action_results if r.get("success") and not r.get("error")]
+	logger.info(f"ACT: Found {len(successful_actions)} successful actions out of {len(action_results)} total actions")
+	
+	if successful_actions and file_system_state:
+		try:
+			import re
+			from qa_agent.filesystem.file_system import FileSystem
+			file_system = FileSystem.from_state(file_system_state)
+			
+			# Get todo.md content
+			todo_content = file_system.get_todo_contents()
+			if todo_content and todo_content != '[empty todo.md, fill it when applicable]':
+				# Parse current todo.md to get steps
+				todo_lines = todo_content.split('\n')
+				todo_steps = []
+				for line in todo_lines:
+					line_stripped = line.strip()
+					# Handle malformed checkboxes (e.g., "- [x] - [ ]" should become "- [ ]")
+					# Remove ALL checkbox patterns until we find the actual step text
+					cleaned_line = line_stripped
+					while re.match(r'^\s*-\s*\[[xX ]\]\s*', cleaned_line):
+						cleaned_line = re.sub(r'^\s*-\s*\[[xX ]\]\s*', '', cleaned_line)
+					
+					# Check if this is a todo line (has checkbox pattern originally)
+					if line_stripped.startswith('- [') and ('[ ]' in line_stripped or '[x]' in line_stripped or '[X]' in line_stripped):
+						# Extract step text (after removing all checkbox patterns)
+						step_text = cleaned_line.strip()
+						if step_text:
+							todo_steps.append(step_text)
+				
+				# Use LLM to intelligently match successful actions to todo steps
+				# Only use successful actions (actions that completed without errors)
+				if todo_steps and successful_actions:
+					from qa_agent.utils.llm_todo_updater import llm_match_actions_to_todo_steps
+					from qa_agent.llm import get_llm
+					
+					# Prepare successful actions with extracted_content for better LLM matching
+					# successful_actions are from action_results, which have extracted_content
+					# We need to convert them back to action dict format for the LLM matcher
+					enriched_actions = []
+					for result in successful_actions:
+						# result has: {"success": True, "action": {"click": {...}}, "extracted_content": "..."}
+						action_dict = result.get("action", {})
+						if action_dict:
+							enriched_action = action_dict.copy()
+							# Add extracted_content for better matching
+							if result.get("extracted_content"):
+								enriched_action["extracted_content"] = result["extracted_content"]
+							enriched_action["success"] = True
+							enriched_actions.append(enriched_action)
+					
+					logger.info(f"ACT: Matching {len(enriched_actions)} actions to {len(todo_steps)} todo steps")
+					logger.debug(f"ACT: Todo steps: {todo_steps[:3]}...")  # Log first 3 steps
+					
+					# Get LLM for todo matching
+					todo_llm = get_llm()
+					
+					# LLM analyzes successful actions and determines which steps are complete
+					completed_indices = await llm_match_actions_to_todo_steps(
+						executed_actions=enriched_actions,
+						todo_steps=todo_steps,
+						llm=todo_llm,
+					)
+					
+					logger.info(f"ACT: LLM returned {len(completed_indices)} completed step indices: {completed_indices}")
+					
+					# Update todo.md content using replace_file_str (browser-use style)
+					if completed_indices:
+						for step_idx in completed_indices:
+							if step_idx < len(todo_steps):
+								step_text = todo_steps[step_idx]
+								
+								# Find the exact line in todo_content (handle whitespace variations and malformed checkboxes)
+								for line in todo_lines:
+									line_stripped = line.strip()
+									
+									# Check if this line contains the step text
+									# Handle malformed checkboxes: clean the line to extract step text for comparison
+									cleaned_line_for_match = line_stripped
+									while re.match(r'^\s*-\s*\[[xX ]\]\s*', cleaned_line_for_match):
+										cleaned_line_for_match = re.sub(r'^\s*-\s*\[[xX ]\]\s*', '', cleaned_line_for_match)
+									
+									# Match if step text is in the cleaned line (flexible matching)
+									step_text_normalized = step_text.strip().lower()
+									cleaned_line_normalized = cleaned_line_for_match.strip().lower()
+									
+									# Use flexible matching: step text should be contained in line, or vice versa for short steps
+									# Also check if key words match (for better semantic matching)
+									step_words = set(step_text_normalized.split())
+									line_words = set(cleaned_line_normalized.split())
+									
+									# Match if: step text is substring of line, OR line is substring of step, OR significant word overlap
+									matches = (
+										step_text_normalized in cleaned_line_normalized or
+										cleaned_line_normalized in step_text_normalized or
+										(len(step_words) > 0 and len(step_words & line_words) >= min(3, len(step_words) * 0.6))
+									)
+									
+									if matches:
+										# Check if line has unchecked checkbox AND not already checked
+										has_unchecked = '[ ]' in line_stripped
+										has_checked = '[x]' in line_stripped or '[X]' in line_stripped
+										
+										# Only update if it has unchecked checkbox AND not already fully checked
+										if has_unchecked and not (has_checked and not has_unchecked):
+											# Use the exact line from file (preserves whitespace)
+											old_str = line.rstrip()  # Remove trailing newline but keep leading spaces
+											
+											# Fix malformed checkboxes: clean up to single - [x] format
+											# Extract the actual step text (after all checkbox patterns)
+											step_text_only = cleaned_line_for_match.strip()
+											
+											# Build clean new line: - [x] + step text
+											new_str = f'- [x] {step_text_only}'
+											
+											# Preserve leading whitespace from original line
+											leading_spaces = len(line) - len(line.lstrip())
+											new_str = ' ' * leading_spaces + new_str
+											
+											# Use replace_file_str (browser-use method)
+											result = await file_system.replace_file_str("todo.md", old_str, new_str)
+											if "Successfully" in result:
+												steps_marked_complete += 1
+												logger.info(f"ACT: Marked todo step as complete (fixed malformed checkbox): {step_text[:50]}")
+												break  # Found and updated, move to next step
+						
+						if steps_marked_complete > 0:
+							# Save FileSystem state after todo.md updates
+							file_system_state = file_system.get_state()
+							logger.info(f"ACT: LLM marked {steps_marked_complete} todo step(s) as complete using replace_file (browser-use style)")
+		except Exception as e:
+			logger.warning(f"ACT: Failed to update todo.md with LLM: {e}", exc_info=True)
+			# Continue - todo.md update is important but don't break workflow
+	
+	# Persist FileSystem state (always preserve, even if no file operations in this node)
+	if file_system_state:
+		# Always preserve FileSystem state (carry forward todo.md updates)
+		return_state["file_system_state"] = file_system_state
+		logger.debug("Preserved FileSystem state in act_node (todo.md preserved)")
+	
+	# Also persist if file operations were performed (LLM's file operations)
+	file_operations_performed = any(
+		a.get("action") in ["write_file", "read_file", "replace_file"]
+		for a in executed_actions
+	)
+	
+	if file_operations_performed and file_system_state:
+		# Update FileSystem state if LLM performed file operations
+		from qa_agent.filesystem.file_system import FileSystem
+		file_system = FileSystem.from_state(file_system_state)
+		file_system_state = file_system.get_state()
+		return_state["file_system_state"] = file_system_state
+		logger.debug("Updated FileSystem state in act_node (file operations performed)")
+	
 	return return_state
 
 
-def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type = None, registry = None) -> Any:
-	"""
-	Convert our action dict to browser-use ActionModel format
-
-	Args:
-		action_dict: Our action dictionary from LLM parsing
-		ActionModelClass: Dynamic ActionModel class with action fields (if None, will try to import)
-
-	Returns:
-		ActionModel instance or None if conversion fails
-	"""
-	action_type = action_dict.get("action") or action_dict.get("type")
-
-	if not action_type:
-		logger.warning(f"No action type in dict: {action_dict}")
-		return None
-
-	# Import action classes from browser-use
-	from qa_agent.tools.views import (
-		ClickElementAction,
-		InputTextAction,
-		NavigateAction,
-		DoneAction,
-		ScrollAction,
-		SendKeysAction,
-		SwitchTabAction,
-		CloseTabAction,
-		ExtractAction,
-		SearchAction,
-		WaitAction,
-		NoParamsAction,
-	)
-	
-	# Use provided ActionModel class or fallback to base
-	if ActionModelClass is None:
-		from qa_agent.agent.views import ActionModel as ActionModelClass
-
-	try:
-		# Map action types to ActionModel fields
-		# IMPORTANT: Browser-use uses function names as ActionModel field names
-		# Function names: click, input, navigate, scroll, done, search, extract
-		# Also support legacy names: click_element, input_text, go_to_url (for backward compatibility)
-
-		# Handle click actions (both "click" and legacy "click_element")
-		if action_type == "click" or action_type == "click_element":
-			index = action_dict.get("index") or action_dict.get("element_index")
-			if index is None or index == 0:
-				logger.warning(f"Invalid index for click action (must be > 0): {action_dict}")
-				return None
-			return ActionModelClass(click=ClickElementAction(index=int(index)))
-
-		# Handle input actions (both "input" and legacy "input_text")
-		elif action_type == "input" or action_type == "input_text":
-			# Check for index explicitly (can be 0, which is valid for input)
-			index = action_dict.get("index")
-			if index is None:
-				index = action_dict.get("element_index")
-			text = action_dict.get("text") or action_dict.get("value", "")
-			if index is None:
-				logger.warning(f"No index for input action: {action_dict}")
-				return None
-			clear = action_dict.get("clear", True)
-			# Index 0 is valid for input actions (different from click which requires > 0)
-			return ActionModelClass(input=InputTextAction(index=int(index), text=str(text), clear=clear))
-
-		# Handle navigate actions (both "navigate" and legacy "go_to_url")
-		elif action_type == "navigate" or action_type == "go_to_url":
-			url = action_dict.get("url") or action_dict.get("target")
-			if not url:
-				logger.warning(f"No URL for navigate action: {action_dict}")
-				return None
-			new_tab = action_dict.get("new_tab", False)
-			return ActionModelClass(navigate=NavigateAction(url=str(url), new_tab=new_tab))
-
-		elif action_type == "done":
-			text = action_dict.get("text") or action_dict.get("message", "Task completed")
-			success = action_dict.get("success", True)
-			return ActionModelClass(done=DoneAction(text=str(text), success=success))
-
-		elif action_type == "scroll":
-			down = action_dict.get("down", True)
-			pages = action_dict.get("pages", 1.0)
-			index = action_dict.get("index")
-			return ActionModelClass(scroll=ScrollAction(down=down, pages=float(pages), index=int(index) if index else None))
-
-		elif action_type == "send_keys":
-			keys = action_dict.get("keys", "")
-			return ActionModelClass(send_keys=SendKeysAction(keys=str(keys)))
-
-		elif action_type == "switch_tab" or action_type == "switch":
-			# Browser-use uses "switch" as the action name
-			tab_id = action_dict.get("tab_id", "")
-			# Ensure tab_id is 4 characters (last 4 of target_id) - browser-use requirement
-			if tab_id and len(str(tab_id)) > 4:
-				tab_id = str(tab_id)[-4:]
-			elif tab_id and len(str(tab_id)) < 4:
-				logger.warning(f"Tab ID {tab_id} is less than 4 characters, may be invalid")
-			return ActionModelClass(switch=SwitchTabAction(tab_id=str(tab_id)[-4:] if tab_id else ""))
-
-		elif action_type == "close_tab":
-			tab_id = action_dict.get("tab_id", "")
-			return ActionModelClass(close_tab=CloseTabAction(tab_id=str(tab_id)))
-
-		elif action_type == "extract":
-			# Browser-use extract requires a non-empty query string
-			query = str(action_dict.get("query", "")).strip()
-			if not query:
-				logger.warning("Extract action requires a non-empty query string")
-				return None
-			
-			# Get param model from registry (browser-use pattern)
-			if registry and "extract" in registry.registry.actions:
-				extract_action_info = registry.registry.actions["extract"]
-				param_model = extract_action_info.param_model
-				
-				# Browser-use registry creates param_model from function signature
-				# Since extract() has params: ExtractAction as first param, the model expects:
-				# extract_Params(params: ExtractAction)
-				# So we need to create ExtractAction first, then wrap it in params field
-				from qa_agent.tools.views import ExtractAction
-				extract_action = ExtractAction(
-					query=query,
-					extract_links=bool(action_dict.get("extract_links", False)),
-					start_from_char=int(action_dict.get("start_from_char", 0)),
-				)
-				
-				# Check if param_model expects a 'params' field (registry-inferred pattern)
-				try:
-					# Try wrapping in 'params' field (registry pattern)
-					validated_params = param_model(params=extract_action)
-					return ActionModelClass(extract=validated_params)
-				except Exception:
-					# If that fails, try direct ExtractAction (shouldn't happen but fallback)
-					try:
-						validated_params = param_model(**extract_action.model_dump())
-						return ActionModelClass(extract=validated_params)
-					except Exception as e:
-						logger.warning(f"Could not create extract param_model: {e}, using ExtractAction directly")
-						return ActionModelClass(extract=extract_action)
-			else:
-				# Fallback to our ExtractAction
-				extract_links = action_dict.get("extract_links", False)
-				start_from_char = action_dict.get("start_from_char", 0)
-				return ActionModelClass(extract=ExtractAction(query=query, extract_links=bool(extract_links), start_from_char=int(start_from_char)))
-
-		elif action_type == "search":
-			query = action_dict.get("query", "")
-			engine = action_dict.get("engine", "duckduckgo")
-			return ActionModelClass(search=SearchAction(query=str(query), engine=engine))
-
-		elif action_type == "wait":
-			# Get param model from registry (browser-use pattern)
-			if registry and "wait" in registry.registry.actions:
-				wait_action_info = registry.registry.actions["wait"]
-				param_model = wait_action_info.param_model
-				# Create params dict
-				params_dict = {"seconds": int(action_dict.get("seconds", 3))}
-				# Validate and create param instance
-				validated_params = param_model(**params_dict)
-				return ActionModelClass(wait=validated_params)
-			else:
-				# Fallback to our WaitAction
-				from qa_agent.tools.views import WaitAction
-				seconds = action_dict.get("seconds", 3)
-				return ActionModelClass(wait=WaitAction(seconds=int(seconds)))
-
-		elif action_type == "screenshot":
-			from qa_agent.tools.views import NoParamsAction
-			# Screenshot uses NoParamsAction
-			return ActionModelClass(screenshot=NoParamsAction())
-
-		elif action_type == "go_back":
-			from qa_agent.tools.views import NoParamsAction
-			# Go back uses NoParamsAction
-			return ActionModelClass(go_back=NoParamsAction())
-
-		else:
-			logger.warning(f"Unknown action type: {action_type}")
-			return None
-
-	except Exception as e:
-		logger.error(f"Error converting action {action_type} to ActionModel: {e}", exc_info=True)
-		return None

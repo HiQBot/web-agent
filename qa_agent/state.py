@@ -1,143 +1,199 @@
 """
-LangGraph State Model for QA Automation Agent
+QA Agent State Definition - LangGraph v1 Compatible
 
-Defines the state schema that flows through the LangGraph workflow.
-Following LangGraph v1.0 best practices:
-- TypedDict for state definition
-- Optional fields for incremental updates
-- Lists are replaced (not appended) - nodes return new lists
+Uses TypedDict with Annotated reducers for state management following LangGraph v1 best practices.
+No hardcoded values - all configurable via settings or state initialization.
 """
-from typing import TypedDict, List, Optional, Any, Dict
+from typing import TypedDict, List, Dict, Any, Optional
+from typing_extensions import Annotated
+import operator
+
+from qa_agent.filesystem.file_system import FileSystemState
+from qa_agent.config import settings
 
 
 class QAAgentState(TypedDict):
     """
-    State for QA Automation Agent
+    QA Agent State Schema - LangGraph v1 TypedDict Pattern
     
-    This state is passed between nodes in the LangGraph workflow.
-    All fields are optional except where noted to allow incremental updates.
+    Fields with Annotated use reducers for automatic accumulation.
+    Fields without Annotated are replaced each step.
+    
+    Reference: https://docs.langchain.com/oss/python/langgraph/
     """
     
-    # Task & Goal
-    task: str  # Original user task/instruction
-    current_goal: Optional[str]  # Current sub-goal being worked on
-    start_url: Optional[str]  # Initial URL to navigate to
-
-    # Multi-Step Task Planning (NEW - for complex workflows)
-    goals: List[Dict[str, Any]]  # Sequential goals parsed from task
-    completed_goals: List[str]  # IDs of completed goals
-    current_goal_index: int  # Index of current goal being worked on
-    task_context: Optional[str]  # Dynamic task description for current goal
-
-    # Browser State (Serializable)
-    browser_session_id: Optional[str]  # Session ID for lookup in registry (serializable)
-    current_url: Optional[str]  # Current page URL
-    browser_state_summary: Optional[Any]  # Browser state summary (dict or BrowserStateSummary object)
-    dom_snapshot: Optional[Dict[str, Any]]  # Full DOM snapshot data
-    dom_selector_map: Optional[Dict[int, Any]]  # Cached selector map for element lookups
+    # ========== Core Task Fields ==========
+    task: str  # Original user task - never changes
+    start_url: Optional[str]  # Optional initial URL
     
-    # State Communication Flags (for Act → Think communication)
-    fresh_state_available: bool  # True if Act node fetched fresh state after actions
-    page_changed: bool  # True if page changed (navigation, tab switch, etc.)
+    # ========== Browser Session ==========
+    browser_session_id: Optional[str]  # Browser session identifier
+    
+    # ========== Step Tracking ==========
+    step_count: int  # Current step number (incremented each step)
+    max_steps: int  # Maximum steps allowed (from config, not hardcoded)
+    
+    # ========== Current Page State ==========
+    current_url: Optional[str]  # Current page URL
     previous_url: Optional[str]  # Previous URL for change detection
+    current_title: Optional[str]  # Current page title
     previous_element_count: Optional[int]  # Previous element count for change detection
     
-    # Tab Management
-    new_tab_id: Optional[str]  # New tab ID if tab was opened
-    new_tab_url: Optional[str]  # New tab URL
-    just_switched_tab: bool  # True if tab was just switched
+    # ========== Tab Management ==========
+    tab_count: int  # Number of open tabs
+    previous_tabs: List[str]  # List of tab IDs for comparison
+    new_tab_id: Optional[str]  # New tab ID if one was opened
+    new_tab_url: Optional[str]  # New tab URL if one was opened
+    just_switched_tab: bool  # Flag indicating tab switch occurred
+    
+    # ========== Task Progression Tracking (LLM-Driven) ==========
+    # NO hardcoded goals - LLM manages via todo.md
+    # These fields kept for backward compatibility but should be phased out
+    goals: List[Dict[str, Any]]  # High-level goals (optional, LLM-driven via todo.md)
+    completed_goals: Annotated[List[str], operator.add]  # Accumulated completed goal IDs
+    current_goal_index: int  # Current goal index
+    current_goal: Optional[str]  # Current goal description
+    
+    # ========== FileSystem State (CRITICAL for todo.md persistence) ==========
+    file_system_state: Optional[FileSystemState]  # Persisted FileSystem state
+    
+    # ========== Action Planning & Execution ==========
+    # Note: planned_actions are ActionModel objects from LLM, but stored as Any for state flexibility
+    # think.py returns list[ActionModel], act.py receives them directly
+    planned_actions: List[Any]  # Actions planned by think node (ActionModel objects)
+    executed_actions: List[Dict[str, Any]]  # Actions executed by act node (as dicts for history)
+    action_results: List[Dict[str, Any]]  # Results from executed actions
+    
+    # ========== History (Accumulated) ==========
+    # LangGraph v1 pattern: Use Annotated with operator.add for accumulation
+    history: Annotated[List[Dict[str, Any]], operator.add]  # Accumulated execution history
+    
+    # ========== Browser State Cache ==========
+    browser_state_summary: Optional[Dict[str, Any]]  # Cached browser state summary
+    dom_selector_map: Optional[Dict[int, Any]]  # Cached DOM selector map
+    fresh_state_available: bool  # Flag indicating fresh state is available
+    page_changed: bool  # Flag indicating page changed
+    
+    # ========== Tab Switch Context ==========
     tab_switch_url: Optional[str]  # URL after tab switch
     tab_switch_title: Optional[str]  # Title after tab switch
-    previous_tabs: List[str]  # List of previous tab IDs for comparison
-    tab_count: int  # Current number of tabs
     
-    # Actions & Results
-    planned_actions: List[dict]  # Actions planned by Think node
-    executed_actions: List[dict]  # Actions executed in Act node
-    action_results: List[dict]  # Results from action execution
+    # ========== Verification ==========
+    verification_status: Optional[str]  # "pass", "fail", or None
+    verification_results: List[Dict[str, Any]]  # Detailed verification results
     
-    # Verification
-    verification_status: Optional[str]  # "pass" | "fail" | "pending" | None
-    verification_results: List[dict]  # Detailed verification results
-    
-    # Workflow Control
-    step_count: int  # Current step number
-    max_steps: int  # Maximum steps allowed
-    completed: bool  # Whether task is completed
+    # ========== Error Handling & Loop Prevention ==========
     error: Optional[str]  # Error message if any
-
-    # Failure Tracking (browser-use pattern)
-    consecutive_failures: int  # Count of consecutive action failures
-    max_failures: int  # Maximum allowed consecutive failures (default: 3)
-    final_response_after_failure: bool  # Allow one final attempt after max_failures
+    consecutive_failures: int  # Consecutive failure count (browser-use pattern)
+    max_failures: int  # Max failures before stopping (from config, not hardcoded)
+    final_response_after_failure: bool  # Allow final attempt after max failures
+    action_repetition_count: int  # Count of repeated actions
     
-    # History & Context
-    history: List[dict]  # Step-by-step execution history
-    messages: List[dict]  # LLM messages (reserved for future LangChain message history compatibility)
+    # ========== Completion ==========
+    completed: bool  # Task completion flag
+    report: Optional[Dict[str, Any]]  # Final report
     
-    # Report
-    report: Optional[dict]  # Final test report
+    # ========== Read State (Extract Results) ==========
+    read_state_description: Optional[str]  # Extract() results (one-time display)
+    read_state_images: Optional[List[Dict[str, Any]]]  # Images from read_file
 
 
 def create_initial_state(
     task: str,
-    max_steps: int = 50,
     start_url: Optional[str] = None,
-    browser_session_id: Optional[str] = None,
-    **kwargs
+    max_steps: Optional[int] = None,
+    max_failures: Optional[int] = None,
 ) -> QAAgentState:
     """
-    Create initial state for QA agent workflow
-
+    Create initial QA agent state
+    
     Args:
-        task: User task/instruction
-        max_steps: Maximum steps allowed
-        start_url: Initial URL to navigate to
-        browser_session_id: Browser session ID (if session already created)
-        **kwargs: Additional state fields
-
+        task: User task description
+        start_url: Optional initial URL to navigate to
+        max_steps: Maximum steps allowed (defaults to settings.max_steps)
+        max_failures: Maximum consecutive failures (defaults to settings.max_failures)
+        
     Returns:
-        Initial QAAgentState
+        Initial QAAgentState dictionary
+        
+    Note:
+        - No hardcoded values - all come from parameters or settings
+        - LangGraph reducers handle accumulation automatically
+        - FileSystem state initialized as None (created in think_node)
     """
-    return QAAgentState(
-        task=task,
-        current_goal=None,
-        start_url=start_url,
-        goals=[],  # NEW: Will be populated by PLAN node
-        completed_goals=[],  # NEW: Track completed goals
-        current_goal_index=0,  # NEW: Current goal being worked on
-        task_context=None,  # NEW: Dynamic task description
-        browser_session_id=browser_session_id,
-        current_url=None,
-        browser_state_summary=None,
-        dom_snapshot=None,
-        dom_selector_map=None,
-        fresh_state_available=False,
-        page_changed=False,
-        previous_url=None,
-        previous_element_count=None,
-        new_tab_id=None,
-        new_tab_url=None,
-        just_switched_tab=False,
-        tab_switch_url=None,
-        tab_switch_title=None,
-        previous_tabs=[],
-        tab_count=1,
-        planned_actions=[],
-        executed_actions=[],
-        action_results=[],
-        verification_status=None,
-        verification_results=[],
-        step_count=0,
-        max_steps=max_steps,
-        completed=False,
-        error=None,
-        consecutive_failures=0,  # NEW: Track consecutive failures (browser-use pattern)
-        max_failures=3,  # NEW: Max allowed consecutive failures (browser-use default)
-        final_response_after_failure=True,  # NEW: Allow one final attempt (browser-use pattern)
-        history=[],
-        messages=[],
-        report=None,
-        **kwargs
-    )
+    # Use settings defaults if not provided (no hardcoded values)
+    max_steps = max_steps if max_steps is not None else settings.max_steps
+    max_failures = max_failures if max_failures is not None else getattr(settings, 'max_failures', 3)
+    
+    return {
+        # Core task
+        "task": task,
+        "start_url": start_url,
+        
+        # Browser session
+        "browser_session_id": None,
+        
+        # Step tracking
+        "step_count": 0,
+        "max_steps": max_steps,  # From config, not hardcoded
+        
+        # Current page state
+        "current_url": None,
+        "previous_url": None,
+        "current_title": None,
+        "previous_element_count": None,
+        
+        # Tab management
+        "tab_count": 1,  # Start with 1 tab
+        "previous_tabs": [],
+        "new_tab_id": None,
+        "new_tab_url": None,
+        "just_switched_tab": False,
+        
+        # Task progression (LLM-driven via todo.md)
+        "goals": [],  # Empty - LLM creates todo.md
+        "completed_goals": [],  # Reducer will accumulate
+        "current_goal_index": 0,
+        "current_goal": None,
+        
+        # FileSystem state (CRITICAL for todo.md persistence)
+        "file_system_state": None,  # Created in think_node, persisted across steps
+        
+        # Action planning & execution
+        "planned_actions": [],
+        "executed_actions": [],
+        "action_results": [],
+        
+        # History (accumulated via reducer)
+        "history": [],  # Reducer will accumulate
+        
+        # Browser state cache
+        "browser_state_summary": None,
+        "dom_selector_map": None,
+        "fresh_state_available": False,
+        "page_changed": False,
+        
+        # Tab switch context
+        "tab_switch_url": None,
+        "tab_switch_title": None,
+        
+        # Verification
+        "verification_status": None,
+        "verification_results": [],
+        
+        # Error handling & loop prevention
+        "error": None,
+        "consecutive_failures": 0,
+        "max_failures": max_failures,  # From config, not hardcoded
+        "final_response_after_failure": True,  # Browser-use default
+        "action_repetition_count": 0,
+        
+        # Completion
+        "completed": False,
+        "report": None,
+        
+        # Read state
+        "read_state_description": None,
+        "read_state_images": None,
+    }
 

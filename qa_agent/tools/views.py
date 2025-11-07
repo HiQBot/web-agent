@@ -96,9 +96,9 @@ class NoParamsAction(BaseModel):
 
 
 class GetDropdownOptionsAction(BaseModel):
-	index: int
+	index: int = Field(description='Index of the dropdown container element (element with role=combobox, role=listbox, role=menu, or <select> tag). Do NOT use option element indices (elements with role=option or role=menuitem). The action searches for options within this container.')
 
 
 class SelectDropdownOptionAction(BaseModel):
-	index: int
+	index: int = Field(description='Index of the dropdown container element (element with role=combobox, role=listbox, role=menu, or <select> tag). Do NOT use option element indices (elements with role=option or role=menuitem). The action searches for options within this container and clicks the matching option.')
 	text: str = Field(description='exact text/value')

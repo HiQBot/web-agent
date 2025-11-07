@@ -2239,8 +2239,64 @@ class DefaultActionWatchdog(BaseWatchdog):
 					// Check if it's an ARIA dropdown/menu
 					const role = element.getAttribute('role');
 					if (role === 'menu' || role === 'listbox' || role === 'combobox') {
-						// Find all menu items/options
-						const menuItems = element.querySelectorAll('[role="menuitem"], [role="option"]');
+						// CRITICAL: If combobox is closed, open it first by clicking
+						const isExpanded = element.getAttribute('aria-expanded') === 'true' || 
+											element.getAttribute('expanded') === 'true';
+						
+						if (!isExpanded && role === 'combobox') {
+							// Click the combobox to open it (simulates user interaction)
+							element.click();
+							element.focus();
+							
+							// Trigger mousedown/mouseup/click events to ensure dropdown opens
+							const mouseDownEvent = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+							const mouseUpEvent = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+							const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+							element.dispatchEvent(mouseDownEvent);
+							element.dispatchEvent(mouseUpEvent);
+							element.dispatchEvent(clickEvent);
+							
+							// Force a synchronous reflow to ensure DOM updates
+							void element.offsetHeight;
+						}
+						
+						// Find all menu items/options (after opening if needed)
+						// Try multiple times with small delays to catch async-rendered options
+						let menuItems = element.querySelectorAll('[role="menuitem"], [role="option"]');
+						let attempts = 0;
+						const maxAttempts = 3;
+						
+						while (menuItems.length === 0 && attempts < maxAttempts && role === 'combobox') {
+							// Small synchronous delay (busy wait)
+							const start = Date.now();
+							while (Date.now() - start < 50) { /* wait ~50ms */ }
+							
+							// Force reflow
+							void element.offsetHeight;
+							
+							// Search again
+							menuItems = element.querySelectorAll('[role="menuitem"], [role="option"]');
+							attempts++;
+						}
+						
+						// If no options found in combobox, try parent and body (some frameworks render outside)
+						if (menuItems.length === 0 && role === 'combobox') {
+							const parent = element.parentElement;
+							if (parent) {
+								const parentItems = parent.querySelectorAll('[role="menuitem"], [role="option"]');
+								if (parentItems.length > 0) {
+									menuItems = parentItems;
+								}
+							}
+							
+							if (menuItems.length === 0) {
+								const bodyItems = document.body.querySelectorAll('[role="menuitem"], [role="option"]');
+								if (bodyItems.length > 0) {
+									menuItems = bodyItems;
+								}
+							}
+						}
+						
 						const options = [];
 
 						menuItems.forEach((item, idx) => {
@@ -2504,8 +2560,120 @@ class DefaultActionWatchdog(BaseWatchdog):
 						// Handle ARIA dropdowns/menus
 						const role = element.getAttribute('role');
 						if (role === 'menu' || role === 'listbox' || role === 'combobox') {
-							const menuItems = element.querySelectorAll('[role="menuitem"], [role="option"]');
+							// CRITICAL: If combobox is closed, open it first by clicking
+							const isExpanded = element.getAttribute('aria-expanded') === 'true' || 
+												element.getAttribute('expanded') === 'true';
+							
+							if (!isExpanded && role === 'combobox') {
+								// Click the combobox to open it (simulates user interaction)
+								element.click();
+								element.focus();
+								
+								// Trigger mousedown/mouseup/click events to ensure dropdown opens
+								const mouseDownEvent = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+								const mouseUpEvent = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+								const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+								element.dispatchEvent(mouseDownEvent);
+								element.dispatchEvent(mouseUpEvent);
+								element.dispatchEvent(clickEvent);
+								
+								// Force a synchronous reflow to ensure DOM updates
+								void element.offsetHeight;
+							}
+							
+							// Find menu items with retry logic for async-rendered options
+							let menuItems = element.querySelectorAll('[role="menuitem"], [role="option"]');
+							let attempts = 0;
+							const maxAttempts = 3;
+							
+							while (menuItems.length === 0 && attempts < maxAttempts && role === 'combobox') {
+								// Small synchronous delay (busy wait)
+								const start = Date.now();
+								while (Date.now() - start < 50) { /* wait ~50ms */ }
+								
+								// Force reflow
+								void element.offsetHeight;
+								
+								// Search again
+								menuItems = element.querySelectorAll('[role="menuitem"], [role="option"]');
+								attempts++;
+							}
+							
 							const targetTextLower = targetText.toLowerCase();
+							
+							// If still no options found and it's a combobox, try searching in parent/sibling elements
+							// Some frameworks render options outside the combobox element
+							if (menuItems.length === 0 && role === 'combobox') {
+								// Search in parent element
+								const parent = element.parentElement;
+								if (parent) {
+									const parentMenuItems = parent.querySelectorAll('[role="menuitem"], [role="option"]');
+									if (parentMenuItems.length > 0) {
+										// Use parent's menu items
+										for (const item of parentMenuItems) {
+											if (item.textContent) {
+												const itemTextLower = item.textContent.trim().toLowerCase();
+												const itemValueLower = (item.getAttribute('data-value') || '').toLowerCase();
+
+												if (itemTextLower === targetTextLower || itemValueLower === targetTextLower) {
+													// Clear previous selections
+													parentMenuItems.forEach(mi => {
+														mi.setAttribute('aria-selected', 'false');
+														mi.classList.remove('selected');
+													});
+
+													// Select this item
+													item.setAttribute('aria-selected', 'true');
+													item.classList.add('selected');
+
+													// Trigger click and change events
+													item.click();
+													const clickEvent = new MouseEvent('click', { view: window, bubbles: true, cancelable: true });
+													item.dispatchEvent(clickEvent);
+
+													return {
+														success: true,
+														message: `Selected ARIA menu item: ${item.textContent.trim()}`
+													};
+												}
+											}
+										}
+									}
+								}
+								
+								// Also try searching in document body (some frameworks render options at body level)
+								const bodyMenuItems = document.body.querySelectorAll('[role="menuitem"], [role="option"]');
+								if (bodyMenuItems.length > 0) {
+									for (const item of bodyMenuItems) {
+										if (item.textContent) {
+											const itemTextLower = item.textContent.trim().toLowerCase();
+											const itemValueLower = (item.getAttribute('data-value') || '').toLowerCase();
+
+											if (itemTextLower === targetTextLower || itemValueLower === targetTextLower) {
+												// Clear previous selections
+												bodyMenuItems.forEach(mi => {
+													mi.setAttribute('aria-selected', 'false');
+													mi.classList.remove('selected');
+												});
+
+												// Select this item
+												item.setAttribute('aria-selected', 'true');
+												item.classList.add('selected');
+
+												// Trigger click and change events
+												item.click();
+												const clickEvent = new MouseEvent('click', { view: window, bubbles: true, cancelable: true });
+												item.dispatchEvent(clickEvent);
+
+												return {
+													success: true,
+													message: `Selected ARIA menu item: ${item.textContent.trim()}`
+												};
+											}
+										}
+									}
+								}
+							}
 
 							for (const item of menuItems) {
 								if (item.textContent) {
