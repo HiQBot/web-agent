@@ -568,156 +568,58 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             HumanMessage(content=user_content if isinstance(user_content, str) else str(user_content))
         ]
 
-        # Call LLM
-        print(f"\n🤖 Calling LLM ({settings.llm_model})...")
-        response = await llm.ainvoke(langchain_messages)
-        
-        # Extract response content
-        response_content = response.content if hasattr(response, 'content') else str(response)
-        logger.info(f"LLM response received: {len(response_content)} characters")
-        
+        # Call LLM with structured output (LangChain pattern)
+        from qa_agent.views import AgentOutput
+
+        # Create dynamic ActionModel with current page's actions (browser-use pattern)
+        # This gives LLM precise schema of available actions
+        action_model = tools.registry.create_action_model(page_url=current_url)
+
+        # Create dynamic AgentOutput with the action model
+        dynamic_agent_output = AgentOutput.type_with_custom_actions(action_model)
+
+        print(f"\n🤖 Calling LLM ({settings.llm_model}) with structured output...")
+        logger.info(f"Using dynamic ActionModel with {len([a for a in tools.registry.registry.actions.keys()])} registered actions")
+
+        # LangChain uses with_structured_output() method, NOT output_format parameter
+        structured_llm = llm.with_structured_output(dynamic_agent_output)
+        parsed: AgentOutput = await structured_llm.ainvoke(langchain_messages)
+
+        logger.info(f"LLM response received: {parsed}")
+
         # Save LLM response
         log_data["llm_response"] = {
-            "raw_response": response_content,
-            "response_length": len(response_content),
+            "parsed_model": parsed.model_dump(),
             "model": settings.llm_model,
         }
-        
+
         print(f"\n{'='*80}")
-        print(f"📥 RECEIVED FROM LLM")
+        print(f"📥 RECEIVED FROM LLM (Structured Output)")
         print(f"{'='*80}")
-        print(f"\n📄 Raw Response ({len(response_content)} chars):\n{response_content}")
-        
-        # Parse LLM response using browser-use pattern: Pydantic validation
-        print(f"\n🔍 Parsing LLM response...")
-        logger.debug(f"Response content type: {type(response_content)}, length: {len(response_content)}")
-        logger.debug(f"Response content preview: {response_content[:500]}")
-        
-        # Browser-use pattern: Parse JSON and convert action dicts to our format using Tools registry
-        # This matches browser-use's _convert_initial_actions pattern (agent/service.py:2202)
-        planned_actions = []
-        evaluation_previous_goal = None
-        memory = None
-        next_goal = None
-        thinking = None
-        
-        try:
-            # Parse JSON response (browser-use format: {"thinking": "...", "action": [{...}]})
-            import json
-            json_match = re.search(r'\{[\s\S]*\}', response_content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
+        print(f"\n📄 Parsed Model:\n{parsed.model_dump_json(indent=2)}")
 
-                # CRITICAL FIX: Clean JSON before parsing
-                # 1. Remove // comments that break JSON parsing
-                # 2. Escape unescaped newlines in string values (LLM sometimes writes literal newlines)
+        print(f"\n🔍 Extracting fields from structured output...")
 
-                # First, remove // comments line by line
-                json_lines = []
-                for line in json_str.split('\n'):
-                    # Remove // comments but preserve strings with //
-                    if '//' in line:
-                        # Simple approach: remove everything after // on each line
-                        line = re.sub(r'//.*$', '', line)
-                    json_lines.append(line)
-                json_str = '\n'.join(json_lines)
+        # Extract fields directly from Pydantic model (no JSON parsing needed!)
+        evaluation_previous_goal = parsed.evaluation_previous_goal
+        memory = parsed.memory
+        next_goal = parsed.next_goal
+        thinking = parsed.thinking
 
-                # Second, use Python's json decoder with strict=False to handle control chars
-                # This allows literal newlines, tabs, etc. in strings
-                try:
-                    # Try with strict=False first (allows control characters)
-                    llm_data = json.loads(json_str, strict=False)
-                except json.JSONDecodeError as e1:
-                    # If that fails, try escaping literal newlines in string values
-                    logger.debug(f"JSON parsing with strict=False failed: {e1}")
-                    logger.debug("Attempting to fix literal newlines in strings...")
+        # Convert ActionModel list to simple dict format for act node
+        # ActionModel.model_dump() returns {"click": {"index": 123}}
+        # convert_browser_use_actions() converts to {"action": "click", "index": 123}
+        from qa_agent.utils.response_parser import convert_browser_use_actions
 
-                    # Replace literal newlines ONLY inside string values (between quotes)
-                    # This is tricky - we need to escape newlines that are inside strings
-                    # Simple approach: replace all \n that aren't already escaped
-                    try:
-                        # Use a more robust fix: parse with Python's ast.literal_eval after cleanup
-                        import ast
-                        # First try: just replace unescaped newlines with escaped ones
-                        json_str_fixed = json_str.replace('\n', '\\n').replace('\\\\n', '\\n')
-                        llm_data = json.loads(json_str_fixed, strict=False)
-                    except Exception as e2:
-                        logger.error(f"All JSON parsing attempts failed: {e1}, {e2}")
-                        raise e1  # Raise original error
-                
-                # Extract structured fields
-                evaluation_previous_goal = llm_data.get("evaluation_previous_goal")
-                memory = llm_data.get("memory")
-                next_goal = llm_data.get("next_goal")
-                thinking = llm_data.get("thinking")
-                
-                # Convert actions using browser-use pattern (agent/service.py:2202-2222)
-                # Browser-use uses Tools registry to convert action dicts to ActionModel
-                actions_list = llm_data.get("action", [])
-                if actions_list:
-                    from qa_agent.tools.service import Tools
-                    tools = Tools()
-                    DynamicActionModel = tools.registry.create_action_model(page_url=None)
-                    
-                    for action_dict in actions_list:
-                        # Browser-use pattern: Each action_dict has single key-value pair
-                        # e.g., {"click": {"index": 1800}} or {"switch_tab": {"tab_id": "new"}}
-                        if not isinstance(action_dict, dict):
-                            logger.warning(f"Skipping non-dict action: {action_dict}")
-                            continue
-                        
-                        # Get action name (first key)
-                        action_name = next(iter(action_dict))
-                        params = action_dict[action_name]
-                        
-                        # Handle action name aliases (browser-use uses "switch" not "switch_tab")
-                        action_name_aliases = {
-                            "switch_tab": "switch",
-                            "go_to_url": "navigate",
-                            "click_element": "click",
-                            "input_text": "input",
-                        }
-                        if action_name in action_name_aliases:
-                            logger.debug(f"Mapping action alias: {action_name} -> {action_name_aliases[action_name]}")
-                            action_name = action_name_aliases[action_name]
-                        
-                        # Get param model from registry (browser-use pattern)
-                        if action_name not in tools.registry.registry.actions:
-                            logger.warning(f"Unknown action: {action_name}, skipping")
-                            continue
-                        
-                        action_info = tools.registry.registry.actions[action_name]
-                        param_model = action_info.param_model
-                        
-                        try:
-                            # Validate params using param model (browser-use pattern)
-                            validated_params = param_model(**params) if isinstance(params, dict) else param_model(params)
-                            
-                            # Convert to our simple format for LangGraph state
-                            # Browser-use uses ActionModel(**{action_name: validated_params})
-                            # We convert to simple dict format: {"action": "click", "index": 1800}
-                            converted_action = {
-                                "action": action_name,  # Use browser-use action name
-                                "reasoning": "Browser-use validated action"
-                            }
-                            
-                            # Add params to converted action
-                            if isinstance(validated_params, dict):
-                                converted_action.update(validated_params)
-                            else:
-                                # Params is a Pydantic model, convert to dict
-                                params_dict = validated_params.model_dump() if hasattr(validated_params, 'model_dump') else {}
-                                converted_action.update(params_dict)
-                            
-                            planned_actions.append(converted_action)
-                            logger.debug(f"Converted action: {converted_action}")
-                        except Exception as e:
-                            logger.warning(f"Failed to validate action {action_name} with params {params}: {e}")
-                            continue
-        except Exception as e:
-            logger.error(f"Failed to parse LLM response: {e}", exc_info=True)
-            # Fallback to old parser
-            planned_actions = parse_llm_action_plan(response_content)
+        action_dicts = [action_model.model_dump(exclude_unset=True) for action_model in parsed.action]
+        planned_actions = convert_browser_use_actions(action_dicts)
+
+        logger.info(f"✅ Structured output: {len(planned_actions)} actions extracted")
+        for i, action in enumerate(planned_actions, 1):
+            logger.debug(f"  Action {i}: {action}")
+
+        # With structured output, no JSON parsing or error handling needed!
+        # The LLM provider validates the response against the Pydantic schema
         
         logger.debug(f"Parsed {len(planned_actions)} actions: {planned_actions}")
         
@@ -873,7 +775,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             "node": "think",
             "browser_state": browser_state_summary,
             "planned_actions": valid_actions,
-            "llm_response_preview": response_content[:200] if response_content else None,
+            "llm_response_preview": parsed.model_dump_json()[:200] if parsed else None,
             "evaluation_previous_goal": evaluation_previous_goal,  # For history formatting
             "memory": memory,  # For history formatting
             "next_goal": next_goal,  # For history formatting

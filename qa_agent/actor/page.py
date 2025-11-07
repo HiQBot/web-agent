@@ -455,15 +455,16 @@ Before you return the element index, reason about the state and elements for a s
 			# thinking: str
 			element_highlight_index: int | None
 
-		llm_response = await llm.ainvoke(
+		# LangChain uses with_structured_output() method
+		structured_llm = llm.with_structured_output(ElementResponse)
+		llm_response = await structured_llm.ainvoke(
 			[
 				system_message,
 				state_message,
 			],
-			output_format=ElementResponse,
 		)
 
-		element_highlight_index = llm_response.completion.element_highlight_index
+		element_highlight_index = llm_response.element_highlight_index
 
 		if element_highlight_index is None or element_highlight_index not in serialized_dom_state.selector_map:
 			return None
@@ -538,15 +539,17 @@ You will be given a query and the markdown of a webpage that has been filtered t
 		import asyncio
 
 		try:
+			# LangChain uses with_structured_output() method
+			structured_llm = llm.with_structured_output(structured_output)
 			response = await asyncio.wait_for(
-				llm.ainvoke(
-					[SystemMessage(content=system_prompt), UserMessage(content=prompt_content)], output_format=structured_output
+				structured_llm.ainvoke(
+					[SystemMessage(content=system_prompt), UserMessage(content=prompt_content)]
 				),
 				timeout=120.0,
 			)
 
-			# Return the structured output BaseModel instance
-			return response.completion
+			# Return the structured output BaseModel instance (LangChain returns it directly)
+			return response
 		except Exception as e:
 			raise RuntimeError(str(e))
 
