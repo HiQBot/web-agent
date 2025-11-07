@@ -76,6 +76,11 @@ async def plan_node(state: QAAgentState) -> Dict[str, Any]:
 **Goal:**
 Identify 2-5 major phases that can be detected by page state changes (URL/title changes).
 
+**IMPORTANT**:
+- Completion signals must be EXACT URL path segments or title keywords that appear when goal is done
+- Look for URL paths like "/login", "/signup", "/dashboard", "/add", not vague terms
+- Consider both success path AND error handling paths (e.g., "if account exists, go to login")
+
 **Output JSON:**
 ```json
 {{
@@ -83,20 +88,31 @@ Identify 2-5 major phases that can be detected by page state changes (URL/title 
     {{
       "id": "short_id",
       "description": "Brief description",
-      "completion_signals": ["keyword_in_url_or_title"]
+      "completion_signals": ["url_path_or_exact_title_keyword"]
     }}
   ]
 }}
 ```
 
-**Example:**
+**Example 1:**
 For "Sign up, then login, then add item":
 ```json
 {{
   "goals": [
-    {{"id": "signup", "description": "Complete signup", "completion_signals": ["dashboard", "logged in"]}},
-    {{"id": "login", "description": "Log in", "completion_signals": ["dashboard", "my dashboard"]}},
-    {{"id": "add_item", "description": "Add item", "completion_signals": ["success", "added", "created"]}}
+    {{"id": "signup", "description": "Complete signup", "completion_signals": ["/login", "login"]}},
+    {{"id": "login", "description": "Log in", "completion_signals": ["/dashboard", "dashboard"]}},
+    {{"id": "add_item", "description": "Add item", "completion_signals": ["success", "confirmation"]}}
+  ]
+}}
+```
+
+**Example 2:**
+For "Try signup, if exists then login":
+```json
+{{
+  "goals": [
+    {{"id": "attempt_signup", "description": "Attempt signup or detect existing account", "completion_signals": ["/login", "login"]}},
+    {{"id": "login", "description": "Log in with credentials", "completion_signals": ["/dashboard", "welcome"]}}
   ]
 }}
 ```

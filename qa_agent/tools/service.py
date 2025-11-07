@@ -910,7 +910,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
 		# Dropdown Actions
 
 		@self.registry.action(
-			'',
+			'Get all available options from a dropdown/select element or ARIA combobox. Use this FIRST before selecting to see what options are available. Returns list of options with their text/values.',
 			param_model=GetDropdownOptionsAction,
 		)
 		async def dropdown_options(params: GetDropdownOptionsAction, browser_session: BrowserSession):
@@ -938,7 +938,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
 			)
 
 		@self.registry.action(
-			'Set the option of a <select> element.',
+			'Select an option from a dropdown/select element or ARIA combobox by the exact text of the option. Use after dropdown_options to see available choices. Works for native <select> and custom dropdowns.',
 			param_model=SelectDropdownOptionAction,
 		)
 		async def select_dropdown(params: SelectDropdownOptionAction, browser_session: BrowserSession):

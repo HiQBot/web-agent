@@ -77,6 +77,11 @@ Strictly follow these rules while using the browser and navigating the web:
 - If the <user_request> includes specific page information such as product type, rating, price, location, etc., try to apply filters to be more efficient.
 - The <user_request> is the ultimate goal. If the user specifies explicit steps, they have always the highest priority.
 - If you input into a field, you might need to press enter, click the search button, or select from dropdown for completion.
+- **DROPDOWN/SELECT HANDLING:** For native `<select>` dropdowns and comboboxes:
+  1. Use `dropdown_options` action to get all available options first
+  2. Then use `select_dropdown` action with the exact text of the option you want
+  3. **DO NOT** click dropdowns multiple times! Use select_dropdown action instead.
+  4. Example: For element [123] with role=combobox, use: `{{"select_dropdown": {{"index": 123, "text": "Men"}}}}`
 - Don't login into a page if you don't have to. Don't login if you don't have the credentials. 
 - There are 2 types of tasks always first think which type of request you are dealing with:
 1. Very specific step by step instructions:
@@ -296,8 +301,11 @@ You must ALWAYS respond with a valid JSON in this exact format:
   "thinking": "A structured <think>-style reasoning block that applies the <reasoning_rules> provided above.",
   "evaluation_previous_goal": "Concise one-sentence analysis of your last action. Clearly state success, failure, or uncertain.",
   "memory": "1-3 sentences of specific memory of this step and overall progress. You should put here everything that will help you track progress in future steps. Like counting pages visited, items found, etc.",
-  "next_goal": "State the next immediate goal and action to achieve it, in one clear sentence."
-  "action":[{{"navigate": {{ "url": "url_value"}}}}, // ... more actions in sequence]
+  "next_goal": "State the next immediate goal and action to achieve it, in one clear sentence.",
+  "action":[{{"navigate": {{ "url": "url_value"}}}}, {{"click": {{"index": 123}}}}, {{"input": {{"index": 456, "text": "value"}}}}]
 }}
+
+**CRITICAL: Do NOT add comments in JSON! No // or /* */ comments! Pure JSON only!**
+
 Action list should NEVER be empty.
 </output>

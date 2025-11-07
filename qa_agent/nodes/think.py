@@ -238,7 +238,62 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         task = state.get("task", "")
         current_goal = state.get("current_goal")
         max_steps = state.get("max_steps", 50)
-        
+
+        # GOAL TRACKING: Check if current goal is complete and update task context
+        # This prevents the agent from repeating completed steps (e.g., signup after successful login)
+        goals = state.get("goals", [])
+        completed_goals = state.get("completed_goals", [])
+        current_goal_index = state.get("current_goal_index", 0)
+
+        logger.info(f"📊 GOAL TRACKING: {len(completed_goals)}/{len(goals)} goals completed, current index: {current_goal_index}")
+
+        if goals and current_goal_index < len(goals):
+            current_goal_obj = goals[current_goal_index]
+            goal_id = current_goal_obj.get("id", "")
+            goal_desc = current_goal_obj.get("description", "")
+            completion_signals = current_goal_obj.get("completion_signals", [])
+
+            logger.info(f"   Current goal: [{goal_id}] {goal_desc}")
+            logger.info(f"   Completion signals: {completion_signals}")
+
+            # Check if current goal appears complete based on page state (URL/title)
+            is_goal_complete = any(
+                signal.lower() in current_url.lower() or signal.lower() in current_title.lower()
+                for signal in completion_signals
+            )
+
+            logger.info(f"   URL: {current_url}")
+            logger.info(f"   Title: {current_title}")
+            logger.info(f"   Goal complete? {is_goal_complete}")
+
+            if is_goal_complete and goal_id not in completed_goals:
+                # Goal just completed! Mark it and move to next goal
+                logger.info(f"🎯 Goal '{goal_id}' COMPLETED! (detected by URL/title signals)")
+                logger.info(f"   Marking goal as complete and advancing to next goal")
+
+                # Update state to mark goal complete and advance
+                completed_goals = completed_goals + [goal_id]
+                current_goal_index = current_goal_index + 1
+
+                logger.info(f"   Progress: {len(completed_goals)}/{len(goals)} goals completed")
+
+                # Update task context for next goal
+                if current_goal_index < len(goals):
+                    next_goal_obj = goals[current_goal_index]
+                    next_goal_desc = next_goal_obj.get("description", "")
+                    logger.info(f"   Next goal: {next_goal_desc}")
+                    task = f"CURRENT GOAL: {next_goal_desc}\n\nCompleted goals: {', '.join(completed_goals)}\n\nFull task for context:\n{task}"
+                else:
+                    logger.info(f"   ✅ ALL GOALS COMPLETED!")
+                    task = f"All major goals completed. Complete any remaining cleanup.\n\nOriginal task: {task}"
+            else:
+                # Goal still in progress - update task to focus LLM on current goal
+                if completed_goals:
+                    logger.info(f"💡 Focusing LLM on current goal (already completed {len(completed_goals)} goals)")
+                    task = f"CURRENT GOAL: {goal_desc}\n\nCompleted goals: {', '.join(completed_goals)}\n\nFull task for context:\n{task}"
+                else:
+                    logger.info(f"💡 Working on first goal (no goals completed yet)")
+
         # Browser-use pattern: On retry, emphasize that LLM should use CURRENT browser_state
         # The browser_state sent in this step contains FRESH element indices from the current page
         # Human QA approach: Look at the page, see what's there, then interact with the right elements
@@ -551,7 +606,44 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             import json
             json_match = re.search(r'\{[\s\S]*\}', response_content, re.DOTALL)
             if json_match:
-                llm_data = json.loads(json_match.group(0))
+                json_str = json_match.group(0)
+
+                # CRITICAL FIX: Clean JSON before parsing
+                # 1. Remove // comments that break JSON parsing
+                # 2. Escape unescaped newlines in string values (LLM sometimes writes literal newlines)
+
+                # First, remove // comments line by line
+                json_lines = []
+                for line in json_str.split('\n'):
+                    # Remove // comments but preserve strings with //
+                    if '//' in line:
+                        # Simple approach: remove everything after // on each line
+                        line = re.sub(r'//.*$', '', line)
+                    json_lines.append(line)
+                json_str = '\n'.join(json_lines)
+
+                # Second, use Python's json decoder with strict=False to handle control chars
+                # This allows literal newlines, tabs, etc. in strings
+                try:
+                    # Try with strict=False first (allows control characters)
+                    llm_data = json.loads(json_str, strict=False)
+                except json.JSONDecodeError as e1:
+                    # If that fails, try escaping literal newlines in string values
+                    logger.debug(f"JSON parsing with strict=False failed: {e1}")
+                    logger.debug("Attempting to fix literal newlines in strings...")
+
+                    # Replace literal newlines ONLY inside string values (between quotes)
+                    # This is tricky - we need to escape newlines that are inside strings
+                    # Simple approach: replace all \n that aren't already escaped
+                    try:
+                        # Use a more robust fix: parse with Python's ast.literal_eval after cleanup
+                        import ast
+                        # First try: just replace unescaped newlines with escaped ones
+                        json_str_fixed = json_str.replace('\n', '\\n').replace('\\\\n', '\\n')
+                        llm_data = json.loads(json_str_fixed, strict=False)
+                    except Exception as e2:
+                        logger.error(f"All JSON parsing attempts failed: {e1}, {e2}")
+                        raise e1  # Raise original error
                 
                 # Extract structured fields
                 evaluation_previous_goal = llm_data.get("evaluation_previous_goal")
@@ -807,6 +899,9 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             "current_goal": current_goal,
             "previous_url": current_url,  # Track URL for next step to detect tab/URL changes
             "previous_element_count": len(selector_map),  # Track element count for dynamic loading detection
+            # Goal tracking updates
+            "completed_goals": completed_goals,
+            "current_goal_index": current_goal_index,
         }
         
         # Clear tab switch flags after processing
