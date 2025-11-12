@@ -2,7 +2,7 @@
 DOM Stability Utilities
 
 Helper functions to wait for network idle and DOM stability after actions.
-Based on browser-use's DOMWatchdog pattern.
+Based on browser's DOMWatchdog pattern.
 
 Enhanced with adaptive detection for dynamic content.
 """
@@ -24,16 +24,16 @@ async def wait_for_dom_stability(
     """
     Wait for DOM stability after actions (network idle + DOM settled).
     
-    Browser-use pattern: Check for pending network requests and wait if found.
+    browser pattern: Check for pending network requests and wait if found.
     This ensures dropdowns, modals, and dynamic content are fully rendered.
     
     Args:
         browser_session: Browser session to check
-        max_wait_seconds: Maximum time to wait (default 3s, browser-use uses 1s but we wait longer for complex pages)
+        max_wait_seconds: Maximum time to wait (default 3s, browser uses 1s but we wait longer for complex pages)
         check_interval: How often to check (default 0.5s)
     """
     try:
-        # Get initial pending requests (browser-use pattern from DOMWatchdog)
+        # Get initial pending requests (browser pattern from DOMWatchdog)
         initial_state = await browser_session.get_browser_state_summary(
             include_screenshot=False,
             cached=False  # Force fresh check
@@ -47,7 +47,7 @@ async def wait_for_dom_stability(
         
         logger.info(f"⏳ Found {len(pending_requests)} pending network requests, waiting for DOM stability...")
         
-        # Wait for network idle (browser-use pattern: wait 1s if pending requests exist)
+        # Wait for network idle (browser pattern: wait 1s if pending requests exist)
         # We use a polling approach to check if requests complete
         waited = 0.0
         while waited < max_wait_seconds:
@@ -240,7 +240,7 @@ async def clear_cache_if_needed(
     """
     Clear browser state cache if action might have changed the page.
     
-    Browser-use pattern: Clear cache on tab switch, navigation, or actions that change DOM.
+    browser pattern: Clear cache on tab switch, navigation, or actions that change DOM.
     
     Args:
         browser_session: Browser session to clear cache for
@@ -276,8 +276,8 @@ async def clear_cache_if_needed(
             should_clear = True
     
     if should_clear:
-        # Browser-use pattern: Clear cached browser state
-        # Access internal cache (browser-use pattern from session.py line 926)
+        # browser pattern: Clear cached browser state
+        # Access internal cache (browser pattern from session.py line 926)
         if hasattr(browser_session, '_cached_browser_state_summary'):
             browser_session._cached_browser_state_summary = None
         if hasattr(browser_session, '_cached_selector_map'):

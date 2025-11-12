@@ -186,7 +186,7 @@ def _convert_state_history_to_agent_history_list(state: QAAgentState):
 	"""
 	Convert QAAgentState history to AgentHistoryList format for GIF generation.
 
-	This adapts OnKernal's workflow state to browser-use's AgentHistoryList
+	This adapts OnKernal's workflow state to browser's AgentHistoryList
 	format required by create_history_gif().
 
 	Args:
@@ -367,7 +367,7 @@ async def report_node(state: QAAgentState) -> Dict[str, Any]:
 				# Use LangChain structured output pattern
 				structured_judge_llm = judge_llm.with_structured_output(JudgementResult)
 
-				# Convert browser-use messages to LangChain format
+				# Convert browser messages to LangChain format
 				from langchain_core.messages import SystemMessage as LCSystemMessage, HumanMessage
 				lc_messages = []
 				for msg in judge_messages:
@@ -377,7 +377,7 @@ async def report_node(state: QAAgentState) -> Dict[str, Any]:
 						# UserMessage content is a list of ContentPartTextParam and ContentPartImageParam
 						# LangChain expects list of dicts for multimodal content
 						if isinstance(msg.content, list):
-							# Convert browser-use content parts to LangChain format
+							# Convert browser content parts to LangChain format
 							lc_content = []
 							for part in msg.content:
 								if hasattr(part, 'text'):  # ContentPartTextParam

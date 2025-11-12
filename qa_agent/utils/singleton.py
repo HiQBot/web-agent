@@ -1,7 +1,7 @@
 """
 Singleton decorator utility
 
-Copied from browser-use/browser_use/utils.py for compatibility
+Copied from browser/browser_use/utils.py for compatibility
 """
 
 

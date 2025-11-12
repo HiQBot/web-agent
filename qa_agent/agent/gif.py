@@ -131,7 +131,7 @@ def create_history_gif(
 	logo = None
 	if show_logo:
 		try:
-			logo = Image.open('./static/browser-use.png')
+			logo = Image.open('./static/browser.png')
 			# Resize logo to be small (e.g., 40px height)
 			logo_height = 150
 			aspect_ratio = logo.width / logo.height

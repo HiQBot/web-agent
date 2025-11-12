@@ -647,7 +647,7 @@ class BrowserSession(BaseModel):
 						self.logger.info('🌤️ Successfully connected to cloud browser service')
 					except CloudBrowserAuthError:
 						raise CloudBrowserAuthError(
-							'Authentication failed for cloud browser service. Set BROWSER_USE_API_KEY environment variable. You can also create an API key at https://cloud.browser-use.com/new-api-key'
+							'Authentication failed for cloud browser service. Set BROWSER_USE_API_KEY environment variable. You can also create an API key at https://cloud.browser.com/new-api-key'
 						)
 					except CloudBrowserError as e:
 						raise CloudBrowserError(f'Failed to create cloud browser: {e}')
@@ -2005,20 +2005,20 @@ class BrowserSession(BaseModel):
 			# Remove highlights via JavaScript - be thorough
 			script = """
 			(function() {
-				// Remove all browser-use highlight elements
-				const highlights = document.querySelectorAll('[data-browser-use-highlight]');
-				console.log('Removing', highlights.length, 'browser-use highlight elements');
+				// Remove all browser highlight elements
+				const highlights = document.querySelectorAll('[data-browser-highlight]');
+				console.log('Removing', highlights.length, 'browser highlight elements');
 				highlights.forEach(el => el.remove());
 
 				// Also remove by ID in case selector missed anything
-				const highlightContainer = document.getElementById('browser-use-debug-highlights');
+				const highlightContainer = document.getElementById('browser-debug-highlights');
 				if (highlightContainer) {
 					console.log('Removing highlight container by ID');
 					highlightContainer.remove();
 				}
 
 				// Final cleanup - remove any orphaned tooltips
-				const orphanedTooltips = document.querySelectorAll('[data-browser-use-highlight="tooltip"]');
+				const orphanedTooltips = document.querySelectorAll('[data-browser-highlight="tooltip"]');
 				orphanedTooltips.forEach(el => el.remove());
 
 				return { removed: highlights.length };
@@ -2203,7 +2203,7 @@ class BrowserSession(BaseModel):
 
 				// Create container for all corners
 				const container = document.createElement('div');
-				container.setAttribute('data-browser-use-interaction-highlight', 'true');
+				container.setAttribute('data-browser-interaction-highlight', 'true');
 				container.style.cssText = `
 					position: absolute;
 					left: ${{rect.x + scrollX}}px;
@@ -2351,18 +2351,18 @@ class BrowserSession(BaseModel):
 				// Interactive elements data
 				const interactiveElements = {json.dumps(elements_data)};
 
-				console.log('=== BROWSER-USE HIGHLIGHTING ===');
+				console.log('=== browser HIGHLIGHTING ===');
 				console.log('Highlighting', interactiveElements.length, 'interactive elements');
 
 				// Double-check: Remove any existing highlight container first
-				const existingContainer = document.getElementById('browser-use-debug-highlights');
+				const existingContainer = document.getElementById('browser-debug-highlights');
 				if (existingContainer) {{
 					console.log('⚠️ Found existing highlight container, removing it first');
 					existingContainer.remove();
 				}}
 
 				// Also remove any stray highlight elements
-				const strayHighlights = document.querySelectorAll('[data-browser-use-highlight]');
+				const strayHighlights = document.querySelectorAll('[data-browser-highlight]');
 				if (strayHighlights.length > 0) {{
 					console.log('⚠️ Found', strayHighlights.length, 'stray highlight elements, removing them');
 					strayHighlights.forEach(el => el.remove());
@@ -2373,8 +2373,8 @@ class BrowserSession(BaseModel):
 
 				// Create container for all highlights - use FIXED positioning (key insight from v0.6.0)
 				const container = document.createElement('div');
-				container.id = 'browser-use-debug-highlights';
-				container.setAttribute('data-browser-use-highlight', 'container');
+				container.id = 'browser-debug-highlights';
+				container.setAttribute('data-browser-highlight', 'container');
 
 				container.style.cssText = `
 					position: absolute;
@@ -2405,7 +2405,7 @@ class BrowserSession(BaseModel):
 				// Add highlights for each element
 				interactiveElements.forEach((element, index) => {{
 					const highlight = document.createElement('div');
-					highlight.setAttribute('data-browser-use-highlight', 'element');
+					highlight.setAttribute('data-browser-highlight', 'element');
 					highlight.setAttribute('data-element-id', element.backend_node_id);
 					highlight.style.cssText = `
 						position: absolute;

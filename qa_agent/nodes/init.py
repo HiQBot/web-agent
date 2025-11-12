@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_url_from_task(task: str) -> Optional[str]:
-	"""Extract URL from task string using browser-use pattern matching.
+	"""Extract URL from task string using browser pattern matching.
 	
 	Args:
 		task: Task string that may contain a URL
@@ -26,7 +26,7 @@ def _extract_url_from_task(task: str) -> Optional[str]:
 	# Remove email addresses from task before looking for URLs
 	task_without_emails = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '', task)
 
-	# Look for common URL patterns (browser-use pattern)
+	# Look for common URL patterns (browser pattern)
 	patterns = [
 		r'https?://[^\s<>"\']+',  # Full URLs with http/https
 		r'(?:www\.)?[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}(?:/[^\s<>"\']*)?',  # Domain names with subdomains and optional paths
@@ -107,7 +107,7 @@ async def init_node(state: QAAgentState) -> Dict[str, Any]:
 	"""
 	logger.info("INIT: Starting browser session initialization")
 
-	# Get start URL from state if provided, otherwise extract from task (browser-use pattern)
+	# Get start URL from state if provided, otherwise extract from task (browser pattern)
 	start_url = state.get("start_url")
 	if not start_url:
 		task = state.get("task", "")
@@ -133,7 +133,7 @@ async def init_node(state: QAAgentState) -> Dict[str, Any]:
 			logger.warning(f"INIT: Could not get current page URL: {e}")
 			current_url = start_url  # Fallback to requested URL
 
-	# Initialize tab tracking for new tab detection (browser-use pattern)
+	# Initialize tab tracking for new tab detection (browser pattern)
 	tab_count = 1  # Start with 1 tab
 	previous_tabs = []  # Track tab IDs for comparison
 	try:
@@ -158,7 +158,7 @@ async def init_node(state: QAAgentState) -> Dict[str, Any]:
 	except Exception as e:
 		logger.warning(f"INIT: Failed to initialize ScreenshotService (non-critical): {e}")
 
-	# CRITICAL: Compulsory LLM-driven todo.md creation (browser-use style but mandatory)
+	# CRITICAL: Compulsory LLM-driven todo.md creation (browser style but mandatory)
 	# Use LLM to dynamically parse task and create todo.md structure
 	# No hardcoded keywords - LLM intelligently breaks down any task
 	task = state.get("task", "")

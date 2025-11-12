@@ -1,4 +1,4 @@
-"""Browser module - browser-use integration"""
+"""Browser module - browser integration"""
 from .session import BrowserSession
 from .profile import BrowserProfile
 

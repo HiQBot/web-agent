@@ -25,9 +25,9 @@ llm = get_llm(model='gpt-4o-mini')
 
 async def main():
 	"""
-	Main function demonstrating mixed automation with Browser-Use and Playwright.
+	Main function demonstrating mixed automation with browser and Playwright.
 	"""
-	print('🚀 Mixed Automation with Browser-Use and Actor API')
+	print('🚀 Mixed Automation with browser and Actor API')
 
 	browser = Browser(keep_alive=True)
 	await browser.start()
@@ -35,7 +35,7 @@ async def main():
 	page = await browser.get_current_page() or await browser.new_page()
 
 	# Go to apple wikipedia page
-	await page.goto('https://browser-use.github.io/stress-tests/challenges/angularjs-form.html')
+	await page.goto('https://browser.github.io/stress-tests/challenges/angularjs-form.html')
 
 	await asyncio.sleep(1)
 

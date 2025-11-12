@@ -88,7 +88,7 @@ class QAAgentState(TypedDict):
     
     # ========== Error Handling & Loop Prevention ==========
     error: Optional[str]  # Error message if any
-    consecutive_failures: int  # Consecutive failure count (browser-use pattern)
+    consecutive_failures: int  # Consecutive failure count (browser pattern)
     max_failures: int  # Max failures before stopping (from config, not hardcoded)
     final_response_after_failure: bool  # Allow final attempt after max failures
     action_repetition_count: int  # Count of repeated actions
@@ -202,7 +202,7 @@ def create_initial_state(
         "error": None,
         "consecutive_failures": 0,
         "max_failures": max_failures,  # From config, not hardcoded
-        "final_response_after_failure": True,  # Browser-use default
+        "final_response_after_failure": True,  # browser default
         "action_repetition_count": 0,
         
         # Completion

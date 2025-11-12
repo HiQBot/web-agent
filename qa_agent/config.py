@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None
     gemini_model: Optional[str] = None
 
-    # Browser Settings (CDP & browser-use)
+    # Browser Settings (CDP & browser)
     headless: bool = False  # Set to False for headful browser (kernel-docker container)
     browser_timeout: int = 30000  # milliseconds
     navigation_timeout: int = 30000  # milliseconds
@@ -55,13 +55,13 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # Browser-use compatibility settings (used by profile.py)
+    # browser compatibility settings (used by profile.py)
     IN_DOCKER: bool = False
-    BROWSER_USE_CONFIG_DIR: Path = Path.home() / ".browser-use"
-    BROWSER_USE_DEFAULT_USER_DATA_DIR: Path = Path.home() / ".browser-use" / "user-data"
-    BROWSER_USE_EXTENSIONS_DIR: Path = Path.home() / ".browser-use" / "extensions"
+    BROWSER_USE_CONFIG_DIR: Path = Path.home() / ".browser"
+    BROWSER_USE_DEFAULT_USER_DATA_DIR: Path = Path.home() / ".browser" / "user-data"
+    BROWSER_USE_EXTENSIONS_DIR: Path = Path.home() / ".browser" / "extensions"
     ANONYMIZED_TELEMETRY: bool = False  # Disable telemetry
-    BROWSER_USE_LOGGING_LEVEL: str = "INFO"  # Browser-use logging level
+    BROWSER_USE_LOGGING_LEVEL: str = "INFO"  # browser logging level
 
     # GIF generation settings (cross-platform)
     # Windows: C:/Windows/Fonts, Linux: /usr/share/fonts, macOS: /Library/Fonts
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Backward compatibility alias for browser-use code
+# Backward compatibility alias for browser code
 CONFIG = settings
 
 

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.api_title,
     version=settings.api_version,
-    description="QA Automation Agent API - LangGraph + Browser-Use Integration",
+    description="QA Automation Agent API - LangGraph + browser Integration",
 )
 
 # Add CORS middleware

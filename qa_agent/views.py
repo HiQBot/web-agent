@@ -1,13 +1,13 @@
 """
 Pydantic models for QA Agent
-Copied from browser-use for structured output support
+Copied from browser for structured output support
 """
 from pydantic import BaseModel, ConfigDict, Field
 from qa_agent.tools.registry.views import ActionModel
 
 
 class AgentOutput(BaseModel):
-	"""LLM output structure - matches browser-use exactly"""
+	"""LLM output structure - matches browser exactly"""
 	model_config = ConfigDict(arbitrary_types_allowed=True, extra='forbid')
 
 	thinking: str | None = None

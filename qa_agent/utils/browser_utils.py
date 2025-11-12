@@ -550,7 +550,7 @@ def merge_dicts(a: dict, b: dict, path: tuple[str, ...] = ()):
 
 @cache
 def get_browser_use_version() -> str:
-	"""Get the browser-use package version using the same logic as Agent._set_browser_use_version_and_source"""
+	"""Get the browser package version using the same logic as Agent._set_browser_use_version_and_source"""
 	try:
 		package_root = Path(__file__).parent.parent
 		pyproject_path = package_root / 'pyproject.toml'
@@ -570,24 +570,24 @@ def get_browser_use_version() -> str:
 		# If pyproject.toml doesn't exist, try getting version from pip
 		from importlib.metadata import version as get_version
 
-		version = str(get_version('browser-use'))
+		version = str(get_version('browser'))
 		os.environ['LIBRARY_VERSION'] = version
 		return version
 
 	except Exception as e:
-		logger.debug(f'Error detecting browser-use version: {type(e).__name__}: {e}')
+		logger.debug(f'Error detecting browser version: {type(e).__name__}: {e}')
 		return 'unknown'
 
 
 async def check_latest_browser_use_version() -> str | None:
-	"""Check the latest version of browser-use from PyPI asynchronously.
+	"""Check the latest version of browser from PyPI asynchronously.
 
 	Returns:
 		The latest version string if successful, None if failed
 	"""
 	try:
 		async with httpx.AsyncClient(timeout=3.0) as client:
-			response = await client.get('https://pypi.org/pypi/browser-use/json')
+			response = await client.get('https://pypi.org/pypi/browser/json')
 			if response.status_code == 200:
 				data = response.json()
 				return data['info']['version']

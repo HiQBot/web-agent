@@ -1,8 +1,8 @@
 """
-PLAN Node - Browser-use todo.md pattern (pure LLM-driven)
+PLAN Node - browser todo.md pattern (pure LLM-driven)
 
 This node does MINIMAL work - it just passes through and lets the LLM naturally
-create todo.md on its first step. This follows browser-use's design philosophy:
+create todo.md on its first step. This follows browser's design philosophy:
 
 System prompt already says:
 "If todo.md is empty and the task is multi-step, generate a stepwise plan in todo.md using file tools."
@@ -30,7 +30,7 @@ async def plan_node(state: QAAgentState) -> Dict[str, Any]:
 	Plan node: Lightweight goal extraction for loop prevention
 
 	This node does TWO things:
-	1. Let LLM manage todo.md naturally (browser-use pattern)
+	1. Let LLM manage todo.md naturally (browser pattern)
 	2. Extract high-level goals for PAGE STATE-based completion detection
 
 	The goals are ONLY used to detect "we're on dashboard now, signup must be done"
@@ -178,8 +178,8 @@ Extract goals now:"""
 			except (json.JSONDecodeError, KeyError) as e:
 				logger.warning(f"PLAN: Could not parse goals: {e}")
 
-		# Fallback: Pure browser-use pattern (no goal tracking)
-		logger.info("PLAN: No goals extracted, using pure browser-use todo.md pattern")
+		# Fallback: Pure browser pattern (no goal tracking)
+		logger.info("PLAN: No goals extracted, using pure browser todo.md pattern")
 		# CRITICAL: completed_goals has reducer - return [] means "no new items"
 		return {
 			"goals": [],  # No reducer - replace with empty list

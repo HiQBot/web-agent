@@ -33,7 +33,7 @@ def should_continue(state: QAAgentState) -> Literal["continue", "retry", "done"]
             logger.error(f"Workflow error: {state.get('error')}")
             return "done"
 
-        # Check max consecutive failures (browser-use pattern: service.py:1755-1761)
+        # Check max consecutive failures (browser pattern: service.py:1755-1761)
         # If final_response_after_failure is True, allow one final attempt after max_failures
         consecutive_failures = state.get("consecutive_failures", 0)
         max_failures = state.get("max_failures", 3)
@@ -105,7 +105,7 @@ def should_continue_after_think(state: QAAgentState) -> Literal["continue", "don
         if state.get("error"):
             return "done"
 
-        # Check max consecutive failures (browser-use pattern)
+        # Check max consecutive failures (browser pattern)
         consecutive_failures = state.get("consecutive_failures", 0)
         max_failures = state.get("max_failures", 3)
         final_response_after_failure = state.get("final_response_after_failure", True)

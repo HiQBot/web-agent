@@ -11,19 +11,19 @@ logger = logging.getLogger(__name__)
 
 def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Convert browser-use action format to our simple format
+    Convert browser action format to our simple format
 
-    Browser-use format: {"hover": {"elements": [1820]}}
+    browser format: {"hover": {"elements": [1820]}}
     Our format: {"action": "hover", "index": 1820}
 
     Args:
-        actions: List of browser-use format actions
+        actions: List of browser format actions
 
     Returns:
         List of actions in our format
     """
     converted = []
-    logger.debug(f"Converting {len(actions)} browser-use actions: {actions}")
+    logger.debug(f"Converting {len(actions)} browser actions: {actions}")
 
     for action_dict in actions:
         # Extract the action type (first key in dict)
@@ -44,31 +44,31 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
             # Shorthand format - action_params is just the index/value
             if action_type == "click":
                 converted.append({
-                    "action": "click",  # Browser-use function name
+                    "action": "click",  # browser function name
                     "index": int(action_params),
-                    "reasoning": "Browser-use shorthand click"
+                    "reasoning": "browser shorthand click"
                 })
             elif action_type == "hover":
                 # Convert hover to click for now
                 logger.warning(f"Shorthand hover converted to click: index={action_params}")
                 converted.append({
-                    "action": "click",  # Browser-use function name
+                    "action": "click",  # browser function name
                     "index": int(action_params),
-                    "reasoning": "Browser-use shorthand hover (converted to click)"
+                    "reasoning": "browser shorthand hover (converted to click)"
                 })
             elif action_type == "switch" or action_type == "switch_tab":
                 # Shorthand switch: {"switch": "E33D"}
                 converted.append({
-                    "action": "switch",  # Browser-use function name
+                    "action": "switch",  # browser function name
                     "tab_id": str(action_params),
-                    "reasoning": "Browser-use shorthand switch tab"
+                    "reasoning": "browser shorthand switch tab"
                 })
             elif action_type == "navigate" or action_type == "go_to_url":
                 # Shorthand navigate: {"navigate": "https://..."}
                 converted.append({
                     "action": "navigate",
                     "url": str(action_params),
-                    "reasoning": "Browser-use shorthand navigate"
+                    "reasoning": "browser shorthand navigate"
                 })
             elif action_type == "input" or action_type == "input_text":
                 # Shorthand input: {"input": "text"} - but this needs an index, so warn
@@ -78,12 +78,12 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
             continue
 
         # Full format with nested dict
-        # IMPORTANT: Convert to browser-use function names (click, input, navigate)
+        # IMPORTANT: Convert to browser function names (click, input, navigate)
         if action_type == "go_to_url" or action_type == "navigate":
             converted.append({
-                "action": "navigate",  # Browser-use function name
+                "action": "navigate",  # browser function name
                 "url": action_params.get("url", ""),
-                "reasoning": "Browser-use action"
+                "reasoning": "browser action"
             })
         elif action_type == "click_element" or action_type == "click":
             # Handle multiple formats:
@@ -100,14 +100,14 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
                 logger.warning(f"No index found in click action params: {action_params}")
                 continue
             converted_action = {
-                "action": "click",  # Browser-use function name
+                "action": "click",  # browser function name
                 "index": int(index),
-                "reasoning": "Browser-use action"
+                "reasoning": "browser action"
             }
             logger.debug(f"Converted click action: {converted_action}")
             converted.append(converted_action)
         elif action_type == "input_text" or action_type == "input":
-            # Input can have index, element_index, element, or id (browser-use supports id lookup)
+            # Input can have index, element_index, element, or id (browser supports id lookup)
             # LLM sometimes uses "element" instead of "index" or "element_index"
             index = action_params.get("index") or action_params.get("element_index") or action_params.get("element")
             # If no index but has id, we need to find it in DOM (but for now, warn)
@@ -115,13 +115,13 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
                 logger.warning(f"Input action has 'id' ({action_params.get('id')}) but no index - LLM should provide index from browser_state")
             # Default to None if no index provided (let act node handle error)
             converted.append({
-                "action": "input",  # Browser-use function name
+                "action": "input",  # browser function name
                 "index": int(index) if index is not None else None,  # Convert to int if provided
                 "text": action_params.get("text", action_params.get("value", "")),
-                "reasoning": "Browser-use action"
+                "reasoning": "browser action"
             })
         elif action_type == "hover":
-            # Browser-use hover format variations:
+            # browser hover format variations:
             # {"hover": {"elements": [1820]}}
             # {"hover": {"element_index": 1820}}
             # {"hover": {"element": 1820}}
@@ -136,16 +136,16 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
                 # TODO: Hover is not yet in our ACT node - for now, convert to click
                 logger.warning(f"Hover action converted to click (hover not yet fully supported): index={elements[0]}")
                 converted.append({
-                    "action": "click",  # Browser-use function name
+                    "action": "click",  # browser function name
                     "index": elements[0],
-                    "reasoning": "Browser-use hover action (converted to click)"
+                    "reasoning": "browser hover action (converted to click)"
                 })
                 continue
         elif action_type == "done":
             converted.append({
                 "action": "done",
                 "text": action_params.get("text", "Task completed"),
-                "reasoning": "Browser-use done action"
+                "reasoning": "browser done action"
             })
         elif action_type == "scroll":
             converted.append({
@@ -153,25 +153,25 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
                 "down": action_params.get("down", True),
                 "pages": action_params.get("pages", 1.0),
                 "index": action_params.get("index"),  # Optional index for element-specific scrolling
-                "reasoning": "Browser-use action"
+                "reasoning": "browser action"
             })
         elif action_type == "switch_tab" or action_type == "switch":
-            # Browser-use uses "switch" as the action name
+            # browser uses "switch" as the action name
             # LLM sometimes uses "tab" instead of "tab_id"
             tab_id = action_params.get("tab_id") or action_params.get("tab", "")
             # Ensure tab_id is 4 characters (last 4 of target_id)
             if tab_id and len(tab_id) > 4:
                 tab_id = tab_id[-4:]
             converted.append({
-                "action": "switch",  # Browser-use function name is "switch"
+                "action": "switch",  # browser function name is "switch"
                 "tab_id": tab_id,
-                "reasoning": "Browser-use switch tab action"
+                "reasoning": "browser switch tab action"
             })
         elif action_type == "close_tab":
             converted.append({
                 "action": "close_tab",
                 "tab_id": action_params.get("tab_id", ""),
-                "reasoning": "Browser-use close tab action"
+                "reasoning": "browser close tab action"
             })
         elif action_type == "extract":
             # Handle different extract formats from LLM
@@ -219,39 +219,39 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
                 "query": query,
                 "extract_links": action_params.get("extract_links", False) or url or (elements and "url" in elements if isinstance(elements, list) else False),
                 "start_from_char": action_params.get("start_from_char", 0),
-                "reasoning": "Browser-use extract action"
+                "reasoning": "browser extract action"
             })
         elif action_type == "search":
             converted.append({
                 "action": "search",
                 "query": action_params.get("query", ""),
                 "engine": action_params.get("engine", "duckduckgo"),
-                "reasoning": "Browser-use search action"
+                "reasoning": "browser search action"
             })
         elif action_type == "send_keys":
             converted.append({
                 "action": "send_keys",
                 "keys": action_params.get("keys", ""),
-                "reasoning": "Browser-use send keys action"
+                "reasoning": "browser send keys action"
             })
         elif action_type == "wait":
             converted.append({
                 "action": "wait",
                 "seconds": action_params.get("seconds", 3),
-                "reasoning": "Browser-use wait action"
+                "reasoning": "browser wait action"
             })
         elif action_type == "screenshot":
             converted.append({
                 "action": "screenshot",
-                "reasoning": "Browser-use screenshot action"
+                "reasoning": "browser screenshot action"
             })
         elif action_type == "go_back":
             converted.append({
                 "action": "go_back",
-                "reasoning": "Browser-use go back action"
+                "reasoning": "browser go back action"
             })
         else:
-            logger.warning(f"Unknown browser-use action type: {action_type}, skipping")
+            logger.warning(f"Unknown browser action type: {action_type}, skipping")
 
     logger.debug(f"Converted {len(converted)} actions: {converted}")
     return converted
@@ -259,7 +259,7 @@ def convert_browser_use_actions(actions: List[Dict[str, Any]]) -> List[Dict[str,
 
 def validate_action(action: Dict[str, Any]) -> bool:
     """
-    Validate action using browser-use action types
+    Validate action using browser action types
 
     Args:
         action: Action dictionary to validate
@@ -270,7 +270,7 @@ def validate_action(action: Dict[str, Any]) -> bool:
     if not isinstance(action, dict):
         return False
 
-    # browser-use uses "action" key, but support legacy "type" for backward compatibility
+    # browser uses "action" key, but support legacy "type" for backward compatibility
     action_type = action.get("action") or action.get("type")
     if not action_type:
         logger.warning("Action missing 'action' or 'type' key")
@@ -281,7 +281,7 @@ def validate_action(action: Dict[str, Any]) -> bool:
         action["action"] = action.pop("type")
         action_type = action["action"]
 
-    # Valid browser-use action types (using actual function names from browser-use)
+    # Valid browser action types (using actual function names from browser)
     VALID_ACTIONS = {
         "click", "input", "navigate", "scroll", "done", "search", "extract",
         "send_keys", "switch", "switch_tab", "close_tab", "wait", "screenshot", "go_back",
@@ -297,7 +297,7 @@ def validate_action(action: Dict[str, Any]) -> bool:
     if action_type == "done":
         return True
 
-    # Validate required fields by action type (using browser-use function names)
+    # Validate required fields by action type (using browser function names)
     if action_type in ["navigate", "go_to_url"]:  # go_to_url is legacy, will be converted to navigate
         if "url" not in action:
             logger.warning(f"{action_type} action missing 'url' field")

@@ -41,7 +41,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         # Increment step count
         step_count = state.get("step_count", 0) + 1
         
-        # Get browser state from browser-use BrowserSession
+        # Get browser state from browser BrowserSession
         from qa_agent.utils.session_registry import get_session
 
         browser_session_id = state.get("browser_session_id")
@@ -52,8 +52,8 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         if not browser_session:
             raise ValueError(f"Browser session {browser_session_id} not found in registry")
 
-        # Get browser state summary with DOM extraction (browser-use native call)
-        # Browser-use pattern: ALWAYS get fresh state at start of each step (see agent/service.py _prepare_context)
+        # Get browser state summary with DOM extraction (browser native call)
+        # browser pattern: ALWAYS get fresh state at start of each step (see agent/service.py _prepare_context)
         # CRITICAL: On retry or after tab switch, this ensures we see the ACTUAL current page state, not stale state
         
         # OPTIMIZATION: Check if act node already provided fresh state after actions
@@ -110,10 +110,10 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         if current_tab_before_state and current_tab_after_state and current_tab_before_state != current_tab_after_state:
             logger.warning(f"⚠️ Tab changed during state retrieval: {current_tab_before_state[-4:]} → {current_tab_after_state[-4:]}")
 
-        # Extract DOM data for logging/history (browser-use handles DOM internally in AgentMessagePrompt)
+        # Extract DOM data for logging/history (browser handles DOM internally in AgentMessagePrompt)
         current_url = browser_state.url
         current_title = browser_state.title
-        # Defensive check: ensure selector_map is always a dict (browser-use should return dict)
+        # Defensive check: ensure selector_map is always a dict (browser should return dict)
         selector_map = {}
         if browser_state.dom_state and hasattr(browser_state.dom_state, 'selector_map'):
             selector_map_raw = browser_state.dom_state.selector_map
@@ -122,7 +122,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             else:
                 logger.warning(f"selector_map is not a dict (type: {type(selector_map_raw)}), using empty dict")
         
-        # Check for new tabs opened by previous actions (browser-use pattern: check tabs from state)
+        # Check for new tabs opened by previous actions (browser pattern: check tabs from state)
         # This ensures we're aware of tabs opened by actions, even if we haven't switched yet
         # Defensive check: ensure current_tabs is always a list
         current_tabs = []
@@ -133,7 +133,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                 logger.warning(f"browser_state.tabs is not a list (type: {type(browser_state.tabs)}), using empty list")
         tab_info = [{"id": t.target_id[-4:], "title": t.title, "url": t.url} for t in current_tabs]
         
-        # Detect if this is a retry after failure OR if we just switched tabs (browser-use pattern: always verify current state)
+        # Detect if this is a retry after failure OR if we just switched tabs (browser pattern: always verify current state)
         history = state.get("history", [])
         is_retry = False
         just_switched_tab = state.get("just_switched_tab", False)
@@ -142,7 +142,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         previous_url = None
         previous_tab_id = None
         
-        # Check if verify node just switched tabs (browser-use pattern: fresh state is automatically sent)
+        # Check if verify node just switched tabs (browser pattern: fresh state is automatically sent)
         # The browser_state already contains all elements from the new page - LLM will analyze dynamically
         tab_switch_system_message = None
         if just_switched_tab:
@@ -169,7 +169,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                 if last_entry.get("verification_status") == "fail":
                     is_retry = True
                     # Get previous URL/tab from history for comparison
-                    # Browser-use pattern: compare current state with previous state to detect changes
+                    # browser pattern: compare current state with previous state to detect changes
                     for entry in reversed(history):
                         if isinstance(entry, dict) and entry.get("node") == "think":
                             browser_state_prev = entry.get("browser_state") or entry.get("browser_state_summary", {})
@@ -220,12 +220,12 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             logger.info(f"   Current tab: {current_tab_id[-4:] if current_tab_id else 'unknown'}")
             logger.info(f"   This will be handled by verify node - LLM should see tab info in browser_state")
         
-        # Browser-use pattern: get_browser_state_summary() already handles:
+        # browser pattern: get_browser_state_summary() already handles:
         # - URL detection via get_current_page_url() (CDP-based, reliable)
         # - Network idle detection via DOMWatchdog._get_pending_network_requests()
         # - Page stability waiting (1s if pending requests exist)
         # - DOM building and element extraction
-        # We trust browser-use's built-in mechanisms - no need to re-implement URL/page loading detection
+        # We trust browser's built-in mechanisms - no need to re-implement URL/page loading detection
         # DOMWatchdog.on_BrowserStateRequestEvent() handles all of this automatically
         
         # CRITICAL: Log current tab state prominently so we can verify LLM gets correct tab's DOM
@@ -245,10 +245,10 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         current_goal = state.get("current_goal")
         max_steps = state.get("max_steps", 50)
 
-        # GOAL TRACKING: Page state detection + informational context (Phase 4: Browser-use pattern)
+        # GOAL TRACKING: Page state detection + informational context (Phase 4: browser pattern)
         # Goals track major phase transitions (e.g., "we're on dashboard, signup done")
         # LLM sees goals in history/context but decides next steps via todo.md and next_goal field
-        # This matches browser-use pattern: goals inform LLM, but LLM generates next_goal itself
+        # This matches browser pattern: goals inform LLM, but LLM generates next_goal itself
         goals = state.get("goals", [])
         completed_goals = state.get("completed_goals", [])
         current_goal_index = state.get("current_goal_index", 0)
@@ -305,7 +305,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                 else:
                     logger.info(f"💡 Starting first phase: {goal_desc}")
 
-        # Browser-use pattern: On retry, emphasize that LLM should use CURRENT browser_state
+        # browser pattern: On retry, emphasize that LLM should use CURRENT browser_state
         # The browser_state sent in this step contains FRESH element indices from the current page
         # Human QA approach: Look at the page, see what's there, then interact with the right elements
         if is_retry:
@@ -313,8 +313,8 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             logger.info(f"   LLM will see CURRENT page state and can adapt actions based on what's actually available")
             logger.info(f"   Previous failure context is included in agent_history above")
 
-        # Build prompt using browser-use SystemPrompt and AgentMessagePrompt
-        logger.info(f"Building prompt for task using browser-use prompts: {task[:100]}...")
+        # Build prompt using browser SystemPrompt and AgentMessagePrompt
+        logger.info(f"Building prompt for task using browser prompts: {task[:100]}...")
 
         # Create SystemPrompt (loads from system_prompt.md)
         system_prompt = SystemPrompt(
@@ -332,20 +332,20 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
 
         step_info = AgentStepInfo(step_number=step_count, max_steps=max_steps)
 
-        # Format history for agent_history_description (browser-use HistoryItem format)
-        # Browser-use format: <step_N>\nevaluation\nmemory\nnext_goal\nResult\naction_results\n</step_N>
+        # Format history for agent_history_description (browser HistoryItem format)
+        # browser format: <step_N>\nevaluation\nmemory\nnext_goal\nResult\naction_results\n</step_N>
         agent_history_description = ""
-        read_state_description = ""  # Track extract() results separately (browser-use pattern)
+        read_state_description = ""  # Track extract() results separately (browser pattern)
         read_state_idx = 0
         
         if history:
-            # Get last 5 steps (browser-use uses max_history_items)
+            # Get last 5 steps (browser uses max_history_items)
             recent_steps = history[-5:]
             for step_entry in recent_steps:
                 step_num = step_entry.get("step", 0)
                 node = step_entry.get("node", "unknown")
                 
-                # Build HistoryItem format (browser-use pattern)
+                # Build HistoryItem format (browser pattern)
                 step_content_parts = []
                 
                 # Extract evaluation/memory/goal from previous think node if available
@@ -382,18 +382,18 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                     results = step_entry.get("action_results", [])
                     
                     for result in results:
-                        # Browser-use pattern: prefer long_term_memory, fallback to extracted_content
+                        # browser pattern: prefer long_term_memory, fallback to extracted_content
                         long_term_memory = result.get("long_term_memory")
                         extracted_content = result.get("extracted_content")
                         include_only_once = result.get("include_extracted_content_only_once", False)
                         error = result.get("error")
                         
-                        # Handle read_state (extract() results) - browser-use pattern
+                        # Handle read_state (extract() results) - browser pattern
                         if include_only_once and extracted_content:
                             read_state_description += f'<read_state_{read_state_idx}>\n{extracted_content}\n</read_state_{read_state_idx}>\n'
                             read_state_idx += 1
                         
-                        # Build action_results text (browser-use pattern)
+                        # Build action_results text (browser pattern)
                         if long_term_memory:
                             action_results_text += f'{long_term_memory}\n'
                         elif extracted_content and not include_only_once:
@@ -453,7 +453,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                         step_content_parts.append(f'Result\n{action_results_text.strip()}')
                 
                 # Add verification failure details (critical for retry - LLM needs to know WHY it failed)
-                # Browser-use pattern: On retry, LLM sees fresh browser_state with CURRENT element indices
+                # browser pattern: On retry, LLM sees fresh browser_state with CURRENT element indices
                 # LLM should analyze what's actually available NOW, not use stale indices from previous step
                 if node == "verify":
                     verification_status = step_entry.get("verification_status")
@@ -474,7 +474,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                         
                         if failure_details:
                             step_content_parts.append(f'Result\n{"\n".join(failure_details)}')
-                            # Browser-use pattern: Guide LLM to use CURRENT browser_state (sent in this step)
+                            # browser pattern: Guide LLM to use CURRENT browser_state (sent in this step)
                             # Human QA approach: Look at what's on the page NOW, then pick the right element
                             step_content_parts.append("⚠️ RETRY: The previous action failed. Please review the CURRENT <browser_state> above to see what elements are actually available on this page. Element indices may have changed - use the indices shown in the current browser_state, not from previous steps.")
                 
@@ -487,7 +487,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                         if extracted_content:
                             step_content_parts.append(f'Result\n{extracted_content}')
 
-                # Format as browser-use HistoryItem: <step_N>...</step_N>
+                # Format as browser HistoryItem: <step_N>...</step_N>
                 if step_content_parts:
                     content = '\n'.join(step_content_parts)
                     agent_history_description += f'<step_{step_num}>\n{content}\n</step_{step_num}>\n'
@@ -500,7 +500,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         # Clean up read_state_description
         read_state_description = read_state_description.strip('\n') if read_state_description else None
 
-        # Get page-filtered actions (browser-use pattern: show only relevant actions per page)
+        # Get page-filtered actions (browser pattern: show only relevant actions per page)
         page_filtered_actions = None
         try:
             from qa_agent.tools.service import Tools
@@ -509,22 +509,22 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         except Exception as e:
             logger.debug(f"Could not get page-filtered actions: {e}")
         
-        # Browser-use pattern: Force done action after max_failures (service.py:902-913)
+        # browser pattern: Force done action after max_failures (service.py:902-913)
         # Check if we've reached max consecutive failures
         consecutive_failures = state.get("consecutive_failures", 0)
         max_failures = state.get("max_failures", 3)
         final_response_after_failure = state.get("final_response_after_failure", True)
 
-        # Browser-use pattern: Don't add hard-coded guidance - just send the browser state
+        # browser pattern: Don't add hard-coded guidance - just send the browser state
         # The LLM will analyze the current browser_state and decide actions based on what it sees
         # If we switched tabs, the browser_state already contains the new page's elements
         # The LLM can see all interactive elements and their indices, so it can adapt dynamically
         enhanced_task = task
 
-        # Force done action after max failures (browser-use pattern: service.py:905-913)
+        # Force done action after max failures (browser pattern: service.py:905-913)
         if consecutive_failures >= max_failures and final_response_after_failure:
             logger.warning(f"🛑 Max consecutive failures reached ({consecutive_failures}/{max_failures}), forcing done action")
-            # Create forced done message (browser-use pattern)
+            # Create forced done message (browser pattern)
             force_done_msg = f'You failed {max_failures} times. Therefore we terminate the agent.\n'
             force_done_msg += 'Your only tool available is the "done" tool. No other tool is available. All other tools which you see in history or examples are not available.\n'
             force_done_msg += 'If the task is not yet fully finished as requested by the user, set success in "done" to false! E.g. if not all steps are fully completed. Else success to true.\n'
@@ -533,7 +533,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             enhanced_task = force_done_msg
         
         # Restore or create file system for extract() action support
-        # Browser-use pattern: FileSystem handles saving extracted content to files
+        # browser pattern: FileSystem handles saving extracted content to files
         # CRITICAL: Persist FileSystem state across steps for todo.md tracking
         from qa_agent.filesystem.file_system import FileSystem
         from pathlib import Path
@@ -553,7 +553,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
 
         # Phase 3 + 4: Robust task context enhancement with conflict resolution
         # Priority system: todo.md (PRIMARY) + goals (SECONDARY hints)
-        # This makes our QA agent better than browser-use by providing page state hints
+        # This makes our QA agent better than browser by providing page state hints
         # while maintaining LLM-driven task progression via todo.md
         
         # Start with original task
@@ -690,11 +690,11 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             browser_state_summary=browser_state,  # Pass the actual BrowserStateSummary object
             file_system=file_system,  # FileSystem for extract() action and file operations
             agent_history_description=agent_history_description,
-            read_state_description=read_state_description,  # Extract() results (browser-use pattern)
+            read_state_description=read_state_description,  # Extract() results (browser pattern)
             task=enhanced_task,  # Use enhanced task with tab switch context if applicable
             include_attributes=None,  # Use default attributes
             step_info=step_info,
-            page_filtered_actions=page_filtered_actions,  # Page-specific actions (browser-use pattern)
+            page_filtered_actions=page_filtered_actions,  # Page-specific actions (browser pattern)
             max_clickable_elements_length=40000,
             sensitive_data=None,
             available_file_paths=None,
@@ -706,7 +706,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         )
 
         # Get formatted messages
-        # Browser-use pattern: AgentMessagePrompt.get_user_message() includes:
+        # browser pattern: AgentMessagePrompt.get_user_message() includes:
         # - <agent_history> with previous steps
         # - <agent_state> with user_request, step_info, etc.
         # - <browser_state> with FULL DOM structure via llm_representation() - ALL interactive elements with indices
@@ -717,7 +717,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         user_message = agent_message_prompt.get_user_message(use_vision=False)
         
         # Log that LLM is receiving full DOM structure (for debugging/verification)
-        # Browser-use pattern: AgentMessagePrompt includes FULL DOM via llm_representation()
+        # browser pattern: AgentMessagePrompt includes FULL DOM via llm_representation()
         # This gives LLM complete page structure BEFORE deciding actions - like human QA analyzes page first
         if browser_state.dom_state:
             try:
@@ -771,17 +771,17 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         }
 
         print(f"\n{'='*80}")
-        print(f"📤 SENDING TO LLM (Step {step_count}) - Using browser-use prompts")
+        print(f"📤 SENDING TO LLM (Step {step_count}) - Using browser prompts")
         print(f"{'='*80}")
-        print(f"\n📝 System Message (browser-use):\n{system_content[:500]}...")
-        print(f"\n💬 User Message (browser-use):\n{user_content[:500]}...")
+        print(f"\n📝 System Message (browser):\n{system_content[:500]}...")
+        print(f"\n💬 User Message (browser):\n{user_content[:500]}...")
         print(f"\n💾 Saving prompt to: {log_file}")
 
         # Initialize LLM and call
-        logger.info("Calling LLM to generate action plan with browser-use prompts...")
+        logger.info("Calling LLM to generate action plan with browser prompts...")
         llm = get_llm()
 
-        # Convert browser-use messages to LangChain format
+        # Convert browser messages to LangChain format
         from langchain_core.messages import SystemMessage as LCSystemMessage, HumanMessage
         langchain_messages = [
             LCSystemMessage(content=system_content),
@@ -791,7 +791,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         # Call LLM with structured output (LangChain pattern)
         from qa_agent.views import AgentOutput
 
-        # Create dynamic ActionModel with current page's actions (browser-use pattern)
+        # Create dynamic ActionModel with current page's actions (browser pattern)
         # This gives LLM precise schema of available actions
         action_model = tools.registry.create_action_model(page_url=current_url)
 
@@ -806,7 +806,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         structured_llm = llm.with_structured_output(dynamic_agent_output, method="function_calling")
         raw_response = await structured_llm.ainvoke(langchain_messages)
         
-        # Browser-use pattern: Manually validate the response to match schema (chat_browser_use.py:178)
+        # browser pattern: Manually validate the response to match schema (chat_browser_use.py:178)
         # LangChain's with_structured_output() may return dict or Pydantic model
         # Convert to dict if needed, then validate against AgentOutput schema
         try:
@@ -817,13 +817,13 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                 # Pydantic model or other object - convert to dict
                 completion_data = raw_response.model_dump() if hasattr(raw_response, 'model_dump') else dict(raw_response)
             
-            # Validate against schema (browser-use pattern)
+            # Validate against schema (browser pattern)
             parsed: AgentOutput = dynamic_agent_output.model_validate(completion_data)
         except Exception as e:
             logger.error(f"Failed to validate LLM response against AgentOutput schema: {e}")
             logger.error(f"Raw response type: {type(raw_response)}")
             logger.error(f"Raw response value: {raw_response}")
-            # Re-raise as ValidationError to match browser-use pattern
+            # Re-raise as ValidationError to match browser pattern
             from pydantic import ValidationError
             raise ValidationError(f"LLM response validation failed: {e}") from e
 
@@ -886,7 +886,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         # Get existing history early (needed for multiple return paths)
         existing_history = state.get("history", [])
 
-        # Browser-use pattern: Title and URL are ALREADY in browser_state (<browser_state>)
+        # browser pattern: Title and URL are ALREADY in browser_state (<browser_state>)
         # System prompt says: "Call extract only if the information you are looking for is not visible
         # in your <browser_state> otherwise always just use the needed text from the <browser_state>."
         # So if LLM tries to extract title/URL, auto-complete since they're already available
@@ -901,7 +901,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
                 # Check if we're on a valid page (not about:blank or empty)
                 if current_url and current_url not in ["about:blank", ""] and current_title:
                     logger.info("LLM wants to extract title/URL - these are already in browser_state, auto-completing")
-                    # Auto-complete with the current title and URL (browser-use pattern)
+                    # Auto-complete with the current title and URL (browser pattern)
                     done_message = f"Task completed. Page title: {current_title}, URL: {current_url}"
                     print(f"\n✅ Auto-completing: Title and URL are already in browser state - {done_message}")
                     logger.info(f"Auto-completed task: {done_message}")
@@ -1008,7 +1008,7 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         logger.info(f"Generated {len(valid_actions)} planned actions")
         
         # Update history - create new list (LangGraph best practice: don't mutate state)
-        # Store structured fields for proper history formatting (browser-use HistoryItem format)
+        # Store structured fields for proper history formatting (browser HistoryItem format)
         existing_history = state.get("history", [])
         new_history_entry = {
             "step": step_count,

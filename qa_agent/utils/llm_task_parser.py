@@ -2,7 +2,7 @@
 LLM-Driven Task Parser - Use LLM to dynamically create todo.md structure
 
 This uses LLM intelligence to parse tasks and create todo.md structure,
-matching browser-use's exact format and style. Compulsory in INIT node.
+matching browser's exact format and style. Compulsory in INIT node.
 """
 import logging
 from typing import List
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class TodoStructureResponse(BaseModel):
-    """LLM response with todo.md structure matching browser-use format"""
+    """LLM response with todo.md structure matching browser format"""
     title: str = Field(description="Task title (used as main heading)")
     goal: str = Field(description="The main goal/objective of the task")
     steps: List[str] = Field(description="List of step descriptions for the todo checklist")
@@ -22,7 +22,7 @@ async def llm_create_todo_structure(task: str, llm) -> str:
     """
     Use LLM to dynamically parse task and create todo.md structure.
     
-    Matches browser-use's exact format:
+    Matches browser's exact format:
     # Task Title
     
     ## Goal: Goal description
@@ -36,16 +36,16 @@ async def llm_create_todo_structure(task: str, llm) -> str:
         llm: LLM instance for analysis
         
     Returns:
-        Markdown content for todo.md file in browser-use format
+        Markdown content for todo.md file in browser format
     """
     if not task or not task.strip():
         # Fallback: create simple todo.md
         return "# Task\n\n## Goal: Complete the task\n\n## Tasks:\n- [ ] Complete the task\n"
     
-    # Create LLM prompt matching browser-use style
+    # Create LLM prompt matching browser style
     from langchain_core.messages import SystemMessage, HumanMessage
     
-    system_prompt = """You are an AI assistant that analyzes user tasks and creates a structured todo.md checklist in browser-use format.
+    system_prompt = """You are an AI assistant that analyzes user tasks and creates a structured todo.md checklist in browser format.
 
 Your task:
 1. Analyze the user's task description
@@ -53,7 +53,7 @@ Your task:
 3. Extract the main goal
 4. Break it down into logical, actionable steps
 
-Format requirements (MUST match browser-use style exactly):
+Format requirements (MUST match browser style exactly):
 - Title: One line starting with # (main heading)
 - Goal: One line starting with ## Goal: followed by goal description
 - Tasks: One line starting with ## Tasks: followed by checklist items
@@ -82,12 +82,12 @@ Guidelines:
 - Goal should summarize the overall objective
 """
     
-    user_prompt = f"""Analyze this task and create a structured todo.md checklist in browser-use format:
+    user_prompt = f"""Analyze this task and create a structured todo.md checklist in browser format:
 
 TASK:
 {task}
 
-Create a title, goal statement, and break down the task into logical steps. Return the structure matching the exact browser-use format."""
+Create a title, goal statement, and break down the task into logical steps. Return the structure matching the exact browser format."""
     
     try:
         logger.info(f"llm_create_todo_structure: Starting LLM call for task (length: {len(task)} chars)")
@@ -109,7 +109,7 @@ Create a title, goal statement, and break down the task into logical steps. Retu
         
         logger.info(f"llm_create_todo_structure: LLM response received: title='{response.title}', goal='{response.goal[:50]}...', steps={len(response.steps)}")
         
-        # Build todo.md content matching browser-use format exactly
+        # Build todo.md content matching browser format exactly
         content = f"# {response.title}\n\n"
         content += f"## Goal: {response.goal}\n\n"
         content += "## Tasks:\n"
@@ -117,20 +117,20 @@ Create a title, goal statement, and break down the task into logical steps. Retu
         for step in response.steps:
             content += f"- [ ] {step}\n"
         
-        logger.info(f"llm_create_todo_structure: ✅ LLM created todo.md structure (browser-use format): {len(response.steps)} steps - Title: {response.title[:50]}")
+        logger.info(f"llm_create_todo_structure: ✅ LLM created todo.md structure (browser format): {len(response.steps)} steps - Title: {response.title[:50]}")
         logger.debug(f"llm_create_todo_structure: Generated content length: {len(content)} chars")
         return content
         
     except asyncio.TimeoutError:
         logger.error(f"llm_create_todo_structure: ❌ LLM call timed out after 60 seconds")
-        # Fallback: create simple todo.md in browser-use format
+        # Fallback: create simple todo.md in browser format
         fallback_content = f"# Task\n\n## Goal: {task}\n\n## Tasks:\n- [ ] Complete the task\n"
         logger.warning(f"llm_create_todo_structure: Returning fallback content due to timeout (length: {len(fallback_content)} chars)")
         return fallback_content
     except Exception as e:
         logger.error(f"llm_create_todo_structure: ❌ Failed to use LLM for todo structure creation: {e}", exc_info=True)
         logger.error(f"llm_create_todo_structure: Exception type: {type(e).__name__}, message: {str(e)}")
-        # Fallback: create simple todo.md in browser-use format
+        # Fallback: create simple todo.md in browser format
         fallback_content = f"# Task\n\n## Goal: {task}\n\n## Tasks:\n- [ ] Complete the task\n"
         logger.warning(f"llm_create_todo_structure: Returning fallback content (length: {len(fallback_content)} chars)")
         return fallback_content

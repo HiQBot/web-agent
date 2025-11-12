@@ -4,7 +4,7 @@ Act Node - Execute planned actions
 This node:
 1. Receives planned actions from Think node
 2. Initializes Tools instance with BrowserSession
-3. Executes actions via browser-use Tools
+3. Executes actions via browser Tools
 4. Captures action results
 """
 import logging
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	"""
-	Act node: Execute planned actions using browser-use Tools
+	Act node: Execute planned actions using browser Tools
 
 	Args:
 		state: Current QA agent state
@@ -56,7 +56,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	planned_actions = state.get("planned_actions", [])
 
 	print(f"\n{'='*80}")
-	print(f"🎭 ACT NODE - Executing Actions via browser-use Tools")
+	print(f"🎭 ACT NODE - Executing Actions via browser Tools")
 	print(f"{'='*80}")
 	print(f"📋 Planned Actions: {len(planned_actions)}")
 	print(f"🌐 Browser Session: {browser_session_id[:16]}...")
@@ -70,7 +70,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 		}
 
 	# CRITICAL: Get tabs AND element IDs BEFORE actions to detect changes
-	# Browser-use pattern: Compare tabs before/after to detect new tabs
+	# browser pattern: Compare tabs before/after to detect new tabs
 	# Phase 1 & 2: Track element IDs for adaptive DOM change detection
 	logger.info("📋 Getting state BEFORE actions (for change detection)...")
 	try:
@@ -94,10 +94,10 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 		previous_element_ids = state.get("previous_element_ids", set())
 
 	# Initialize Tools instance
-	logger.info("Initializing browser-use Tools")
+	logger.info("Initializing browser Tools")
 	tools = Tools()
 	
-	# Get dynamic ActionModel class from Tools registry (browser-use recommended approach)
+	# Get dynamic ActionModel class from Tools registry (browser recommended approach)
 	# This creates ActionModel with all registered actions dynamically from the registry
 	# This ensures we always have the correct action fields matching registered action names
 	DynamicActionModel = tools.registry.create_action_model(page_url=None)
@@ -150,7 +150,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 		print(f"\n  [{i}/{len(planned_actions)}] Executing: {action_type}")
 
 		try:
-			# Convert our action dict to browser-use ActionModel
+			# Convert our action dict to browser ActionModel
 			# Pass tools registry for param model lookups
 			action_model = convert_to_action_model(action_dict, DynamicActionModel, tools.registry)
 
@@ -166,9 +166,9 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 				})
 				continue
 
-			# Execute action via browser-use Tools
-			# Browser-use extract action requires page_extraction_llm
-			# Get LLM instance for extract actions (browser-use pattern)
+			# Execute action via browser Tools
+			# browser extract action requires page_extraction_llm
+			# Get LLM instance for extract actions (browser pattern)
 			page_extraction_llm = None
 			if action_type == "extract":
 				from qa_agent.llm import get_llm
@@ -194,7 +194,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 				file_system=file_system,  # Required for extract and file operations
 			)
 
-			# Extract all result data (browser-use ActionResult fields)
+			# Extract all result data (browser ActionResult fields)
 			success = result.error is None
 			extracted_content = result.extracted_content
 			error_msg = result.error
@@ -208,7 +208,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 			logger.info(f"Action {action_type} {'succeeded' if success else 'failed'}: {extracted_content or error_msg}")
 			print(f"    ✅ {action_type} completed" if success else f"    ❌ {action_type} failed: {error_msg}")
 
-			# Store complete result (all browser-use ActionResult fields)
+			# Store complete result (all browser ActionResult fields)
 			action_results.append({
 				"success": success,
 				"action": action_dict,
@@ -219,12 +219,12 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 				"include_extracted_content_only_once": include_extracted_content_only_once,
 				"images": images,
 				"metadata": metadata,
-				"success_flag": success_flag,  # Browser-use success flag (None for regular actions)
+				"success_flag": success_flag,  # browser success flag (None for regular actions)
 			})
 			executed_actions.append(action_dict)
 
 		except Exception as e:
-			# Browser-use pattern: Tools.act() catches BrowserError, TimeoutError, and general exceptions
+			# browser pattern: Tools.act() catches BrowserError, TimeoutError, and general exceptions
 			# and returns ActionResult with error field set
 			# If we get here, it's an exception during conversion or Tools initialization
 			logger.error(f"Error executing action {action_type}: {e}", exc_info=True)
@@ -244,7 +244,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	print(f"\n✅ Executed {len(executed_actions)}/{len(planned_actions)} actions")
 	print(f"{'='*80}\n")
 
-	# CRITICAL: Wait for DOM stability after actions (browser-use pattern)
+	# CRITICAL: Wait for DOM stability after actions (browser pattern)
 	# Phase 2: Use adaptive DOM change detection instead of fixed timeout
 	# This ensures dropdowns, modals, and dynamic content are fully rendered
 	# before Think node analyzes the page
@@ -297,7 +297,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	
 	# CRITICAL: Fetch fresh browser state AFTER actions and DOM stability wait
 	# This ensures Think node sees the CURRENT page state (dropdowns, modals, new content)
-	# Browser-use pattern: Always get fresh state at start of next step
+	# browser pattern: Always get fresh state at start of next step
 	logger.info("🔄 Fetching fresh browser state after actions (for Think node)...")
 	fresh_browser_state = await session.get_browser_state_summary(
 		include_screenshot=False,
@@ -338,7 +338,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	logger.info(f"   💾 Passing fresh state to Think node - LLM will see CURRENT page structure")
 	
 	# Check for new tabs opened by actions (e.g., ChatGPT login opens new tab)
-	# Browser-use pattern: detect new tabs by comparing before/after tab lists
+	# browser pattern: detect new tabs by comparing before/after tab lists
 	new_tab_id = None
 	new_tab_url = None
 	try:
@@ -414,7 +414,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 		"previous_tabs": previous_tabs,  # Track tabs for next comparison
 		"new_tab_id": new_tab_id,  # Pass to next node for tab switching
 		"new_tab_url": new_tab_url,  # Pass URL for context
-		# CRITICAL: Pass fresh state to Think node (browser-use pattern: backend 1 step ahead)
+		# CRITICAL: Pass fresh state to Think node (browser pattern: backend 1 step ahead)
 		"fresh_state_available": True,  # Flag to tell Think node we have fresh state
 		"page_changed": has_page_changing_action or (previous_url and current_url != previous_url),
 		"current_url": current_url,  # Update current URL
@@ -446,7 +446,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 
 def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type = None, registry = None) -> Any:
 	"""
-	Convert our action dict to browser-use ActionModel format
+	Convert our action dict to browser ActionModel format
 
 	Args:
 		action_dict: Our action dictionary from LLM parsing
@@ -461,7 +461,7 @@ def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type 
 		logger.warning(f"No action type in dict: {action_dict}")
 		return None
 
-	# Import action classes from browser-use
+	# Import action classes from browser
 	from qa_agent.tools.views import (
 		ClickElementAction,
 		InputTextAction,
@@ -487,7 +487,7 @@ def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type 
 
 	try:
 		# Map action types to ActionModel fields
-		# IMPORTANT: Browser-use uses function names as ActionModel field names
+		# IMPORTANT: browser uses function names as ActionModel field names
 		# Function names: click, input, navigate, scroll, done, search, extract
 		# Also support legacy names: click_element, input_text, go_to_url (for backward compatibility)
 
@@ -538,9 +538,9 @@ def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type 
 			return ActionModelClass(send_keys=SendKeysAction(keys=str(keys)))
 
 		elif action_type == "switch_tab" or action_type == "switch":
-			# Browser-use uses "switch" as the action name
+			# browser uses "switch" as the action name
 			tab_id = action_dict.get("tab_id", "")
-			# Ensure tab_id is 4 characters (last 4 of target_id) - browser-use requirement
+			# Ensure tab_id is 4 characters (last 4 of target_id) - browser requirement
 			if tab_id and len(str(tab_id)) > 4:
 				tab_id = str(tab_id)[-4:]
 			elif tab_id and len(str(tab_id)) < 4:
@@ -552,18 +552,18 @@ def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type 
 			return ActionModelClass(close_tab=CloseTabAction(tab_id=str(tab_id)))
 
 		elif action_type == "extract":
-			# Browser-use extract requires a non-empty query string
+			# browser extract requires a non-empty query string
 			query = str(action_dict.get("query", "")).strip()
 			if not query:
 				logger.warning("Extract action requires a non-empty query string")
 				return None
 			
-			# Get param model from registry (browser-use pattern)
+			# Get param model from registry (browser pattern)
 			if registry and "extract" in registry.registry.actions:
 				extract_action_info = registry.registry.actions["extract"]
 				param_model = extract_action_info.param_model
 				
-				# Browser-use registry creates param_model from function signature
+				# browser registry creates param_model from function signature
 				# Since extract() has params: ExtractAction as first param, the model expects:
 				# extract_Params(params: ExtractAction)
 				# So we need to create ExtractAction first, then wrap it in params field
@@ -599,7 +599,7 @@ def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type 
 			return ActionModelClass(search=SearchAction(query=str(query), engine=engine))
 
 		elif action_type == "wait":
-			# Get param model from registry (browser-use pattern)
+			# Get param model from registry (browser pattern)
 			if registry and "wait" in registry.registry.actions:
 				wait_action_info = registry.registry.actions["wait"]
 				param_model = wait_action_info.param_model

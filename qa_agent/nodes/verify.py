@@ -29,11 +29,11 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
         logger.info(f"Verify node - Step {state.get('step_count', 0)}")
         
         # Check if we need to switch to a new tab (from act node)
-        # Browser-use pattern: auto-switch to new tabs opened by actions
+        # browser pattern: auto-switch to new tabs opened by actions
         new_tab_id = state.get("new_tab_id")
         new_tab_url = state.get("new_tab_url")
         if new_tab_id:
-            # Ensure tab_id is 4 characters (last 4 of target_id) - browser-use requirement
+            # Ensure tab_id is 4 characters (last 4 of target_id) - browser requirement
             tab_id_4char = str(new_tab_id)[-4:] if new_tab_id else ""
             logger.info(f"New tab detected, switching to tab {tab_id_4char} (URL: {new_tab_url or 'unknown'})...")
             try:
@@ -42,19 +42,19 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                 if browser_session_id:
                     session = get_session(browser_session_id)
                     if session:
-                        # Switch to new tab using browser-use "switch" action (not "switch_tab")
+                        # Switch to new tab using browser "switch" action (not "switch_tab")
                         from qa_agent.tools.service import Tools
                         tools = Tools()
                         from qa_agent.tools.views import SwitchTabAction
                         DynamicActionModel = tools.registry.create_action_model(page_url=None)
-                        # Browser-use uses "switch" as the action name
+                        # browser uses "switch" as the action name
                         switch_action = DynamicActionModel(switch=SwitchTabAction(tab_id=tab_id_4char))
                         switch_result = await tools.act(action=switch_action, browser_session=session)
                         if switch_result.error:
                             logger.warning(f"Failed to switch to new tab: {switch_result.error}")
                         else:
                             logger.info(f"Successfully switched to new tab {tab_id_4char}")
-                            # Browser-use pattern: Verify the switch actually worked and refresh state
+                            # browser pattern: Verify the switch actually worked and refresh state
                             # CRITICAL: Ensure we're actually on the new tab before proceeding
                             try:
                                 # Wait a moment for the switch to complete and events to propagate
@@ -74,8 +74,8 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                                         "error": f"Failed to switch to new tab {tab_id_4char}",
                                     }
                                 
-                                # Browser-use pattern: Wait for network idle before getting state
-                                # Browser-use automatically waits 1s if pending requests exist (dom_watchdog.py line 285)
+                                # browser pattern: Wait for network idle before getting state
+                                # browser automatically waits 1s if pending requests exist (dom_watchdog.py line 285)
                                 # But after tab switch, we may need to wait longer for the new page to load
                                 logger.info("⏳ Waiting for new tab page to load (checking network idle)...")
                                 try:
@@ -88,7 +88,7 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                                     
                                     if pending_requests:
                                         logger.info(f"   Found {len(pending_requests)} pending network requests, waiting for page load...")
-                                        # Wait up to 3 seconds for network idle (browser-use waits 1s, we wait longer for new tabs)
+                                        # Wait up to 3 seconds for network idle (browser waits 1s, we wait longer for new tabs)
                                         import asyncio
                                         max_wait = 3.0
                                         wait_interval = 0.5
@@ -112,7 +112,7 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                                 except Exception as e:
                                     logger.debug(f"Could not check network idle: {e}, proceeding with state refresh")
                                 
-                                # Browser-use pattern: Refresh browser state after tab switch (see mcp/server.py line 919)
+                                # browser pattern: Refresh browser state after tab switch (see mcp/server.py line 919)
                                 # This ensures the DOM cache is updated with the new tab's content
                                 logger.info("🔄 Refreshing browser state after tab switch to get new tab's DOM...")
                                 fresh_state = await session.get_browser_state_summary(
@@ -183,8 +183,8 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
             error = result.get("error")
             extracted_content = result.get("extracted_content", "")
             
-            # Check if extracted_content contains error-like messages (browser-use pattern)
-            # Browser-use sometimes returns warnings in extracted_content instead of error field
+            # Check if extracted_content contains error-like messages (browser pattern)
+            # browser sometimes returns warnings in extracted_content instead of error field
             content_looks_like_error = False
             if extracted_content:
                 error_indicators = [
@@ -223,7 +223,7 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
         
         verification_status = "pass" if all_passed else "fail"
         
-        # CRITICAL: Compulsory LLM-driven todo.md update (browser-use style but mandatory)
+        # CRITICAL: Compulsory LLM-driven todo.md update (browser style but mandatory)
         # Use LLM to intelligently update todo.md based on verified actions
         # No hardcoded keywords - LLM semantically matches actions to steps
         file_system = None
@@ -268,9 +268,9 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                             llm=todo_llm,
                         )
                         
-                        # Update todo.md content using replace_file (browser-use style)
+                        # Update todo.md content using replace_file (browser style)
                         if completed_indices:
-                            # Use replace_file_str to update checkboxes (browser-use pattern)
+                            # Use replace_file_str to update checkboxes (browser pattern)
                             # Need to match exact lines from todo_content, accounting for whitespace
                             for step_idx in completed_indices:
                                 if step_idx < len(todo_steps):
@@ -291,17 +291,17 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
                                             leading_spaces = len(line) - len(line.lstrip())
                                             new_str = ' ' * leading_spaces + new_str
                                             
-                                            # Use replace_file_str (browser-use method)
+                                            # Use replace_file_str (browser method)
                                             result = await file_system.replace_file_str("todo.md", old_str, new_str)
                                             if "Successfully" in result:
                                                 steps_marked_complete += 1
-                                                logger.info(f"VERIFY: Marked todo step as complete (browser-use style): {step_text[:50]}")
+                                                logger.info(f"VERIFY: Marked todo step as complete (browser style): {step_text[:50]}")
                                                 break  # Found and updated, move to next step
                             
                             if steps_marked_complete > 0:
                                 # Save FileSystem state
                                 file_system_state = file_system.get_state()
-                                logger.info(f"VERIFY: LLM marked {steps_marked_complete} todo step(s) as complete using replace_file (browser-use style)")
+                                logger.info(f"VERIFY: LLM marked {steps_marked_complete} todo step(s) as complete using replace_file (browser style)")
             except Exception as e:
                 logger.warning(f"VERIFY: Failed to update todo.md with LLM: {e}", exc_info=True)
                 # Continue - todo.md update is important but don't break workflow
@@ -326,7 +326,7 @@ async def verify_node(state: QAAgentState) -> Dict[str, Any]:
         if "state_updates" not in locals():
             state_updates = {}
         
-        # Clear new_tab_id from state if we successfully switched (browser-use pattern: clear after action)
+        # Clear new_tab_id from state if we successfully switched (browser pattern: clear after action)
         state_updates.update({
             "verification_status": verification_status,
             "verification_results": verification_results,

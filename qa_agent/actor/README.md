@@ -1,6 +1,6 @@
 # Browser Actor
 
-Browser Actor is a web automation library built on CDP (Chrome DevTools Protocol) that provides low-level browser automation capabilities within the browser-use ecosystem.
+Browser Actor is a web automation library built on CDP (Chrome DevTools Protocol) that provides low-level browser automation capabilities within the browser ecosystem.
 
 ## Usage
 
@@ -224,7 +224,7 @@ class ElementInfo(TypedDict):
 
 ## Important Usage Notes
 
-**This is browser-use actor, NOT Playwright or Selenium.** Only use the methods documented above.
+**This is browser actor, NOT Playwright or Selenium.** Only use the methods documented above.
 
 ### Critical JavaScript Rules
 - `page.evaluate()` and `element.evaluate()` MUST use `(...args) => {}` arrow function format
