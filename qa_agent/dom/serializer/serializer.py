@@ -1227,8 +1227,15 @@ class DOMTreeSerializer:
 		if not attributes_to_include:
 			return ''
 
-		# Remove duplicate values
+		# Phase 3: Keep ALL collected attributes (don't filter by include_attributes)
+		# include_attributes is used only to order the output, not to filter
+		# We want LLM to see ALL semantic information available
 		ordered_keys = [key for key in include_attributes if key in attributes_to_include]
+		# Add any remaining attributes that weren't in include_attributes
+		remaining_keys = [key for key in attributes_to_include if key not in ordered_keys]
+		ordered_keys.extend(remaining_keys)
+
+		# Remove duplicate values from ordered keys
 
 		if len(ordered_keys) > 1:
 			keys_to_remove = set()

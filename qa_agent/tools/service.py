@@ -284,10 +284,43 @@ class Tools(Generic[Context]):
 				memory = f'Clicked {element_desc}'
 				logger.info(f'🖱️ {memory}')
 
+				# Enhance metadata with diagnostic information for LLM decision trees
+				# Get current page state for comparison
+				try:
+					current_state = await browser_session.get_browser_state_summary(
+						include_screenshot=False,
+						cached=False
+					)
+					current_url = current_state.url if current_state else None
+					current_element_count = len(current_state.dom_state.selector_map) if (current_state and current_state.dom_state) else 0
+				except Exception as e:
+					logger.debug(f'Could not get current state for diagnostics: {e}')
+					current_url = None
+					current_element_count = 0
+
+				# Build enhanced metadata for LLM diagnostics
+				enhanced_metadata = {
+					**(click_metadata if isinstance(click_metadata, dict) else {})
+				}
+
+				# Add diagnostic signals the LLM needs for decision trees
+				if current_url:
+					enhanced_metadata['url_after'] = current_url
+					enhanced_metadata['element_count_after'] = current_element_count
+
+				# Add element interaction context
+				enhanced_metadata['element_clicked'] = element_desc
+				enhanced_metadata['element_index'] = params.index
+
+				# Add verification message for action result interpretation
+				if 'page_changed' not in enhanced_metadata and current_url:
+					# If watchdog didn't set page_changed, determine from state
+					enhanced_metadata['page_changed'] = False  # Same URL by default
+
 				# Include click coordinates in metadata if available
 				return ActionResult(
 					extracted_content=memory,
-					metadata=click_metadata if isinstance(click_metadata, dict) else None,
+					metadata=enhanced_metadata,
 				)
 			except BrowserError as e:
 				return handle_browser_error(e)
@@ -385,11 +418,31 @@ class Tools(Generic[Context]):
 						error_msgs = '; '.join(console_errors[:2])  # Max 2 for token efficiency
 						msg += f" → Console errors: {error_msgs}"
 
+				# Enhance metadata with page state information for LLM
+				try:
+					current_state = await browser_session.get_browser_state_summary(
+						include_screenshot=False,
+						cached=False
+					)
+					element_count_after = len(current_state.dom_state.selector_map) if (current_state and current_state.dom_state) else 0
+				except Exception as e:
+					logger.debug(f'Could not get element count for input diagnostics: {e}')
+					element_count_after = 0
+
+				# Build enhanced metadata with LLM decision-making context
+				enhanced_input_metadata = {
+					**(input_metadata if isinstance(input_metadata, dict) else {})
+				}
+
+				# Add page state context for LLM to decide if suggestions/dropdowns appeared
+				enhanced_input_metadata['element_count_after'] = element_count_after
+				enhanced_input_metadata['field_index'] = params.index
+
 				# Include input coordinates in metadata if available
 				return ActionResult(
 					extracted_content=msg,
 					long_term_memory=msg,
-					metadata=input_metadata if isinstance(input_metadata, dict) else None,
+					metadata=enhanced_input_metadata,
 				)
 			except BrowserError as e:
 				return handle_browser_error(e)

@@ -653,17 +653,19 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
             action_type = action_context.get("action_type", "unknown")
             action_index = action_context.get("action_index")
             new_elements_count = action_context.get("new_elements_count", 0)
-            
+            likely_pattern = action_context.get("likely_pattern", "unknown")
+
             if new_elements_count > 0:
                 action_context_text = f"\n<action_context>\n"
                 action_context_text += f"Last action: {action_type}"
                 if action_index:
                     action_context_text += f" on element {action_index}"
                 action_context_text += f"\nNew elements appeared: {new_elements_count} elements (marked with *[index])\n"
+                action_context_text += f"Detected pattern: {likely_pattern}\n"
                 action_context_text += f"These elements are likely in a container opened by your last action.\n"
                 action_context_text += f"When multiple elements match your goal, prioritize these NEW elements.\n"
                 action_context_text += f"</action_context>\n"
-                logger.info(f"📊 Adding action context: {action_type} → {new_elements_count} new elements")
+                logger.info(f"📊 Adding action context: {action_type} → {new_elements_count} new elements (pattern: {likely_pattern})")
         
         # Step 3: Merge with priority (todo.md first, then action context, then goals, then full task)
         if todo_context:

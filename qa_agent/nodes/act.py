@@ -316,21 +316,54 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	if not new_element_ids and previous_element_ids:
 		new_element_ids = current_element_ids - previous_element_ids
 	
-	# Phase 1: Build action context for LLM
+	# Phase 1: Build action context for LLM with detailed new element information
 	last_action = executed_actions[-1] if executed_actions else None
 	action_context = None
-	if last_action and new_element_ids:
+	if last_action:
 		action_type = last_action.get("action", "unknown")
 		action_index = last_action.get("index") or last_action.get("click", {}).get("index") or last_action.get("input", {}).get("index")
+
+		# Build enhanced action context with new element details
 		action_context = {
 			"action_type": action_type,
 			"action_index": action_index,
 			"new_elements_count": len(new_element_ids),
 			"new_element_ids": list(new_element_ids)[:20],  # Limit to first 20 for context
 		}
+
+		# Add new element details for LLM's *[index] pattern recognition
+		if new_element_ids and fresh_browser_state.dom_state and fresh_browser_state.dom_state.selector_map:
+			selector_map = fresh_browser_state.dom_state.selector_map
+			new_elements_details = []
+			for elem_id in list(new_element_ids)[:10]:  # Top 10 new elements
+				if elem_id in selector_map:
+					elem = selector_map[elem_id]
+					try:
+						elem_info = {
+							"index": elem_id,
+							"tag": getattr(elem, 'tag_name', ''),
+							"text": getattr(elem, 'node_value', '')[:50],  # Limit text length
+						}
+						new_elements_details.append(elem_info)
+					except Exception as e:
+						logger.debug(f"Could not extract element details: {e}")
+
+			if new_elements_details:
+				action_context["new_elements_details"] = new_elements_details
+
+		# Infer likely interaction pattern from element count change
+		if len(new_element_ids) > 15:
+			action_context["likely_pattern"] = "modal_or_form_opened"
+		elif len(new_element_ids) > 5:
+			action_context["likely_pattern"] = "dropdown_or_menu_opened"
+		elif len(new_element_ids) > 0:
+			action_context["likely_pattern"] = "suggestions_or_details_appeared"
+		else:
+			action_context["likely_pattern"] = "no_new_elements"
+
 		logger.info(
 			f"📊 Action context: {action_type} on {action_index} → "
-			f"{len(new_element_ids)} new elements appeared"
+			f"{len(new_element_ids)} new elements appeared (pattern: {action_context.get('likely_pattern')})"
 		)
 	
 	logger.info(f"✅ Fresh state retrieved: {current_title[:50]} ({current_url[:60]})")
