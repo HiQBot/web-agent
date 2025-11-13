@@ -6,7 +6,7 @@ Entry point for the QA Automation Agent API.
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routes import workflow, health
+from api.routes import workflow, health, websocket, browser_stream, tests
 from qa_agent.config import settings
 
 # Configure logging
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.api_title,
     version=settings.api_version,
-    description="QA Automation Agent API - LangGraph + browser Integration",
+    description="QA Automation Agent API - LangGraph + browser Integration with WebSocket Streaming",
 )
 
 # Add CORS middleware
@@ -34,7 +34,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health.router, prefix=settings.api_prefix, tags=["Health"])
+app.include_router(tests.router, prefix=settings.api_prefix, tags=["Tests"])
 app.include_router(workflow.router, prefix=settings.api_prefix, tags=["Workflow"])
+app.include_router(websocket.router, prefix=settings.api_prefix, tags=["WebSocket"])
+app.include_router(browser_stream.router, prefix=settings.api_prefix, tags=["Browser Stream"])
 
 
 @app.on_event("startup")
