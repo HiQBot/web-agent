@@ -178,8 +178,8 @@ async def set_browser_viewport(width: int, height: int):
         Success status
     """
     try:
-        from qa_agent.utils.session_registry import _SESSION_REGISTRY
-        from qa_agent.browser.session import BrowserSession
+        from web_agent.utils.session_registry import _SESSION_REGISTRY
+        from web_agent.browser.session import BrowserSession
         
         # Try to get active browser session from registry
         browser_session: BrowserSession | None = None

@@ -5,7 +5,7 @@ Simple health check endpoints for monitoring.
 """
 from fastapi import APIRouter
 from pydantic import BaseModel
-from qa_agent.config import settings
+from web_agent.config import settings
 
 router = APIRouter()
 
