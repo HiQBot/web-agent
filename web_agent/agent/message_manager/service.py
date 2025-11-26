@@ -6,7 +6,7 @@ from typing import Literal
 from web_agent.agent.message_manager.views import (
 	HistoryItem,
 )
-from web_agent.prompts.browser_use_prompts import AgentMessagePrompt
+from web_agent.prompts.browser_prompts import AgentMessagePrompt
 from web_agent.agent.views import (
 	ActionResult,
 	AgentOutput,
