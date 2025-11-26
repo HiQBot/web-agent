@@ -90,7 +90,13 @@ def should_continue(state: QAAgentState) -> Literal["continue", "retry", "done"]
 
 def should_continue_after_think(state: QAAgentState) -> Literal["continue", "done", "replan"]:
     """
-    Router function to determine next node after think
+    Router function to determine next node after think.
+
+    Hierarchical Architecture (Phase 3):
+    - THINK outputs: think_output (strategic decision, no actions)
+    - If think_output exists and task not done → continue to ACT
+    - If task completed → done (go to report)
+    - Error handling with max failures
 
     Args:
         state: Current QA agent state
@@ -99,47 +105,45 @@ def should_continue_after_think(state: QAAgentState) -> Literal["continue", "don
         Next node to execute: "continue", "replan", or "done"
     """
     try:
+        # Check if task is completed
         if state.get("completed"):
+            logger.info("✅ Task marked as completed in THINK node")
             return "done"
 
         if state.get("error"):
+            logger.error(f"❌ THINK error: {state.get('error')}")
             return "done"
 
-        # Check max consecutive failures (browser pattern)
+        # Check max failures
         consecutive_failures = state.get("consecutive_failures", 0)
         max_failures = state.get("max_failures", 3)
         final_response_after_failure = state.get("final_response_after_failure", True)
 
         if consecutive_failures >= max_failures + int(final_response_after_failure):
-            logger.error(f"❌ Stopping in think router due to {max_failures} consecutive failures")
+            logger.error(f"❌ Max consecutive failures reached ({consecutive_failures}/{max_failures})")
             return "done"
 
-        # Infinite loop prevention
+        # Check max steps (infinite loop prevention)
         step_count = state.get("step_count", 0)
         max_steps = state.get("max_steps", settings.max_steps)
 
         if step_count >= max_steps:
-            logger.warning(f"Max steps reached in think router: {step_count}/{max_steps}")
+            logger.warning(f"⏸️  Max steps reached: {step_count}/{max_steps}")
             return "done"
 
-        # If we have planned actions, continue to act
-        planned_actions = state.get("planned_actions", [])
-        if planned_actions:
-            return "continue"
+        # Hierarchical flow: Check if THINK produced a strategic decision
+        think_output = state.get("think_output")
+        if think_output:
+            logger.info(f"📋 THINK Decision: {think_output} → routing to ACT")
+            return "continue"  # Go to ACT for execution
 
-        # Check if this is a goal transition (empty actions but more goals to do)
-        goals = state.get("goals", [])
-        current_goal_index = state.get("current_goal_index", 0)
-        if goals and current_goal_index < len(goals):
-            # Goal transition - loop back to think for next goal
-            logger.info("Goal transition detected, looping back to THINK for next goal")
-            return "replan"
-
-        # No actions planned and no more goals, go to report
+        # No think_output and no error = something went wrong
+        logger.warning("⚠️  No think_output generated")
         return "done"
+
     except Exception as e:
-        logger.error(f"Error in think router function: {e}")
-        return "done"  # Fail safe: go to report on error
+        logger.error(f"❌ Router error: {e}")
+        return "done"
 
 
 def create_qa_workflow() -> Any:

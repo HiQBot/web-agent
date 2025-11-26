@@ -105,6 +105,14 @@ class QAAgentState(TypedDict):
     read_state_description: Optional[str]  # Extract() results (one-time display)
     read_state_images: Optional[List[Dict[str, Any]]]  # Images from read_file
 
+    # ========== Hierarchical THINK → ACT Flow ==========
+    think_output: Optional[str]  # Strategic decision from THINK node (e.g., "Click login button")
+    think_reasoning: Optional[str]  # THINK's reasoning (optional, for debugging)
+    act_feedback: Optional[Dict[str, Any]]  # ACT's result: success, action_taken, result_summary, error
+    act_error_context: Optional[str]  # Human-readable error message for THINK's retry decision
+    last_act_result_success: bool  # Quick flag: did last ACT execution succeed?
+    think_retries: int  # How many times current step was rethought (for retry loop prevention)
+
 
 def create_initial_state(
     task: str,
@@ -216,5 +224,13 @@ def create_initial_state(
         # Read state
         "read_state_description": None,
         "read_state_images": None,
+
+        # Hierarchical THINK → ACT Flow
+        "think_output": None,  # Strategic decision from THINK
+        "think_reasoning": None,  # THINK's reasoning (debug)
+        "act_feedback": None,  # ACT's execution result
+        "act_error_context": None,  # Error message for THINK's retry
+        "last_act_result_success": False,  # Did last ACT succeed?
+        "think_retries": 0,  # Retry counter for current step
     }
 
