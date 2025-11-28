@@ -7,9 +7,9 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from qa_agent.workflow import create_qa_workflow
-from qa_agent.state import create_initial_state
-from qa_agent.config import settings
+from web_agent.workflow import create_qa_workflow
+from web_agent.state import create_initial_state
+from web_agent.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

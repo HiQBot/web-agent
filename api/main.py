@@ -7,7 +7,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import workflow, health, websocket, browser_stream, tests
-from qa_agent.config import settings
+from web_agent.config import settings
 
 # Configure logging
 logging.basicConfig(
