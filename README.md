@@ -117,6 +117,34 @@ web-agent/
 └── env.example         # Environment configuration template
 ```
 
+## Contributing
+
+We welcome contributions from the community! Whether you're fixing bugs, improving documentation, adding new features, or enhancing existing functionality, your help is appreciated.
+
+### Ways to Contribute
+
+- 🐛 **Bug Reports**: Found a bug? Open an issue with detailed reproduction steps
+- 💡 **Feature Suggestions**: Have ideas for new capabilities? Share them in discussions
+- 🔧 **Code Contributions**: Submit PRs for bug fixes, enhancements, or new features
+- 📚 **Documentation**: Help improve docs, add examples, or fix typos
+- 🧪 **Testing**: Add test cases or improve test coverage
+
+### How to Contribute
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
+3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
+4. **Push** to the branch (`git push origin feature/amazing-feature`)
+5. **Open** a Pull Request
+
+Please ensure your code follows the existing style and includes appropriate tests.
+
+## Support
+
+- 📧 **Email**: [support@hiqbot.com](mailto:support@hiqbot.com)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/hiqbot/web-agent/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/hiqbot/web-agent/discussions)
+
 ## License
 
 Open-source project by HiQBot. See LICENSE for details.
