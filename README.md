@@ -61,7 +61,54 @@ The agent uses **OpenAI models** (currently) to make intelligent decisions based
 
 ## Quick Start
 
+### OnKernal Browser Setup
+
+This project requires OnKernal Browser to be running. OnKernal provides a Docker-based browser service that exposes Chrome DevTools Protocol (CDP) for automation.
+
+```bash
+# Clone the OnKernal repository
+git clone https://github.com/onkernel/kernel-images.git
+cd kernel-images/images/chromium-headful
+
+# Build the Docker image
+./build-docker.sh
+
+# Run the browser with WebRTC enabled (for live streaming UI to frontend)
+# Note: UKC_TOKEN is not required for local development
+export IMAGE=kernel-docker && \
+export ENABLE_WEBRTC=true && \
+export WITH_KERNEL_IMAGES_API=true && \
+./run-docker.sh
+```
+
+**Why WebRTC?** WebRTC enables live streaming of the browser UI to your frontend. When `ENABLE_WEBRTC=true`, the browser UI on port 8080 streams video/audio in real-time, allowing you to watch browser automation as it happens in the React frontend. This is essential for live viewing and monitoring automation tasks.
+
+**For Headless Mode** (no UI streaming, automation only):
+```bash
+# Set ENABLE_WEBRTC=false to disable streaming
+export IMAGE=kernel-docker && \
+export ENABLE_WEBRTC=false && \
+export WITH_KERNEL_IMAGES_API=true && \
+./run-docker.sh
+```
+
+**Important**: 
+- **UKC_TOKEN and UKC_METRO are NOT needed for local development** - they are only required for cloud/production deployments
+- **ENABLE_WEBRTC=true is required** if you want to view live browser automation in the frontend
+
+The browser will be available at:
+- **CDP Endpoint**: `http://localhost:9222` (for automation via Chrome DevTools Protocol)
+- **Browser UI**: `http://localhost:8080` (for viewing in frontend - requires WebRTC)
+- **WebRTC Ports**: `56000-56100/udp` (for video/audio streaming when WebRTC enabled)
+
+**Note**: 
+- Keep the OnKernal Browser container running while using web-agent
+- Use `ENABLE_WEBRTC=true` if you want to view browser automation in the frontend
+- Use `ENABLE_WEBRTC=false` for headless automation without UI streaming
+
 ### Backend Setup
+
+**Prerequisites**: OnKernal Browser must be running (see above).
 
 ```bash
 # Clone the repository
