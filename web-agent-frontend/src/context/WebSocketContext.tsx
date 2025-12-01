@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react';
 import toast from 'react-hot-toast';
+import { buildWsUrl } from '../config/api';
 
 interface WebSocketMessage {
   type: string;
@@ -44,7 +45,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     const connectWebSocket = () => {
       if (!shouldReconnectRef.current) return;
       
-      const ws = new WebSocket('ws://localhost:8000/ws');
+      const ws = new WebSocket(buildWsUrl('/ws'));
       
       ws.onopen = () => {
         console.log('WebSocket connected');

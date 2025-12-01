@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { EyeIcon } from '@heroicons/react/24/outline';
+import { apiConfig, buildApiUrl } from '../config/api';
 
 interface BrowserViewProps {
   showByDefault?: boolean;
@@ -26,7 +27,7 @@ const BrowserView: React.FC<BrowserViewProps> = ({
     setIsInitializing(true);
     hasInitialized.current = true;
     try {
-      const response = await fetch('/api/v1/browser/init-persistent', {
+      const response = await fetch(buildApiUrl(apiConfig.endpoints.browser.initPersistent), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,7 +92,7 @@ const BrowserView: React.FC<BrowserViewProps> = ({
             )}
           </div>
           <iframe
-            src="http://localhost:8080"
+            src={apiConfig.browserUrl}
             className={`w-full ${height} border-0`}
             title="HiQBot Web Agent Browser"
             allow="camera; microphone; fullscreen"

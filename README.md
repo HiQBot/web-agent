@@ -38,6 +38,7 @@ The agent uses **OpenAI models** (currently) to make intelligent decisions based
 - 🔌 **API-First Design**: FastAPI with RESTful endpoints + WebSocket streaming
 - 🧠 **Stateful Workflow**: LangGraph state management with session persistence
 - 🎯 **Goal Detection**: Identifies phase completion via URL/title changes
+- 🖥️ **Modern Frontend**: React-based UI for real-time monitoring and control
 
 ## Tech Stack
 
@@ -47,6 +48,7 @@ The agent uses **OpenAI models** (currently) to make intelligent decisions based
 | **LLM Provider** | OpenAI API (gpt-4-mini, gpt-4, o1-preview) |
 | **Browser Automation** | OnKernal Browser + CDP |
 | **API Framework** | FastAPI (async, WebSocket support) |
+| **Frontend** | React 18 + TypeScript + Tailwind CSS |
 | **Language** | Python 3.12+ |
 | **DOM Serialization** | Custom CDP-based extractor with accessibility tree |
 
@@ -59,45 +61,51 @@ The agent uses **OpenAI models** (currently) to make intelligent decisions based
 
 ## Quick Start
 
+### Backend Setup
+
 ```bash
 # Clone the repository
 git clone https://github.com/hiqbot/web-agent.git
 cd web-agent
 
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 
 # Configure environment
 cp env.example .env
 # Edit .env and add your OPENAI_API_KEY
+# Configure OnKernal Browser connection (defaults: localhost:9222)
 
 # Run the API server
 python run.py
 # API available at http://localhost:8000
+# Backend connects to OnKernal Browser via CDP on port 9222
 ```
 
-### Example Usage
+### Frontend Setup
 
-```python
-import requests
+```bash
+# Navigate to frontend directory
+cd web-agent-frontend
 
-# Submit a task via REST API
-response = requests.post("http://localhost:8000/api/v1/workflow/run", json={
-    "task": "Go to example.com, sign up for an account with test@email.com",
-    "start_url": "https://example.com",
-    "max_steps": 30
-})
+# Install Node.js dependencies
+npm install
 
-print(response.json())  # Task completion report
+# Configure environment (optional - defaults work for local development)
+cp .env.example .env
+# Edit .env if you need to change API URLs
+
+# Start the development server
+npm run dev
+# Frontend available at http://localhost:3000
 ```
 
-Or use WebSocket for real-time streaming:
-```javascript
-const ws = new WebSocket('ws://localhost:8000/api/v1/ws?client_id=123&task=Sign up for account');
-ws.onmessage = (event) => {
-  console.log('Agent update:', JSON.parse(event.data));
-};
-```
+**Architecture Overview**:
+- **Frontend** (port 3000) → connects to **Backend API** (port 8000)
+- **Backend API** (port 8000) → connects to **OnKernal Browser** via CDP (port 9222)
+- **OnKernal Browser UI** (port 8080) → displayed in frontend iframe for live viewing
+
+**Note**: Make sure OnKernal Browser is running and accessible on the configured CDP port (default: 9222) before starting the backend.
 
 ## Project Structure
 
@@ -113,8 +121,16 @@ web-agent/
 │   ├── tools/          # Action executors (click, type, navigate)
 │   ├── filesystem/     # Task workspace & todo.md management
 │   └── state.py        # LangGraph state definition
+├── web-agent-frontend/  # React frontend application
+│   ├── src/
+│   │   ├── components/ # UI components
+│   │   ├── pages/      # Application pages
+│   │   ├── config/     # API configuration
+│   │   └── context/    # React context providers
+│   ├── public/         # Static assets
+│   └── .env.example    # Frontend environment template
 ├── run.py              # API server entry point
-└── env.example         # Environment configuration template
+└── env.example         # Backend environment configuration template
 ```
 
 ## Contributing
@@ -129,15 +145,6 @@ We welcome contributions from the community! Whether you're fixing bugs, improvi
 - 📚 **Documentation**: Help improve docs, add examples, or fix typos
 - 🧪 **Testing**: Add test cases or improve test coverage
 
-### How to Contribute
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-Please ensure your code follows the existing style and includes appropriate tests.
 
 ## Support
 
