@@ -20,6 +20,7 @@ import {
   ChevronUpIcon,
 } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
+import { apiConfig, buildApiUrl, buildWsUrl } from '../config/api';
 
 interface BrowserAutomationModalProps {
   isOpen: boolean;
@@ -42,7 +43,7 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
   onClose,
   testId,
   testName = 'Test Automation',
-  browserUrl = 'http://localhost:8080',
+  browserUrl = apiConfig.browserUrl,
   task = 'Automated testing task',
   startUrl,
 }) => {
@@ -115,7 +116,7 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
           
           // Update browser viewport via API
           try {
-            const response = await fetch(`/api/v1/browser/viewport?width=${Math.round(browserWidth)}&height=${Math.round(browserHeight)}`, {
+            const response = await fetch(`${buildApiUrl(apiConfig.endpoints.browser.stream)}?width=${Math.round(browserWidth)}&height=${Math.round(browserHeight)}`, {
               method: 'POST',
             });
             if (response.ok) {
@@ -176,7 +177,7 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
 
       // Connect to WebSocket for actual test execution
       const clientId = `client_${Date.now()}`;
-      const wsUrl = `ws://localhost:8000/api/v1/ws/automation?client_id=${clientId}&task=${encodeURIComponent(task)}&start_url=${encodeURIComponent(startUrl || '')}&max_steps=50`;
+      const wsUrl = buildWsUrl(apiConfig.ws.automation(clientId, task, startUrl, 50));
 
       addLog('info', 'Connecting to automation server...');
       setStatus('connecting');

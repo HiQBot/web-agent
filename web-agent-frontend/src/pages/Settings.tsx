@@ -11,6 +11,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { apiConfig, buildApiUrl } from '../config/api';
 
 interface AppSettings {
   api_url: string;
@@ -27,8 +28,8 @@ interface AppSettings {
 
 const Settings: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>({
-    api_url: 'http://localhost:8000',
-    websocket_url: 'ws://localhost:8000/ws',
+    api_url: apiConfig.apiUrl,
+    websocket_url: apiConfig.wsUrl,
     browser_timeout: 30,
     screenshot_interval: 5,
     recording_enabled: true,
@@ -49,7 +50,7 @@ const Settings: React.FC = () => {
   const { data: currentSettings, isLoading } = useQuery<AppSettings>({
     queryKey: ['settings'],
     queryFn: async () => {
-      const response = await fetch('/api/v1/settings');
+      const response = await fetch(buildApiUrl('/settings'));
       const data = await response.json();
       return data.settings;
     }
@@ -65,7 +66,7 @@ const Settings: React.FC = () => {
   // Save settings mutation
   const saveSettingsMutation = useMutation({
     mutationFn: async (newSettings: AppSettings) => {
-      const response = await fetch('/api/v1/settings', {
+      const response = await fetch(buildApiUrl('/settings'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSettings),
@@ -85,7 +86,7 @@ const Settings: React.FC = () => {
   // Test connection mutation
   const testConnectionMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/v1/health');
+      const response = await fetch(buildApiUrl(apiConfig.endpoints.health));
       if (!response.ok) throw new Error('Connection failed');
       return response.json();
     },
@@ -113,8 +114,8 @@ const Settings: React.FC = () => {
   const handleResetSettings = () => {
     if (window.confirm('Are you sure you want to reset all settings to default values?')) {
       setSettings({
-        api_url: 'http://localhost:8000',
-        websocket_url: 'ws://localhost:8000/ws',
+        api_url: apiConfig.apiUrl,
+        websocket_url: apiConfig.wsUrl,
         browser_timeout: 30,
         screenshot_interval: 5,
         recording_enabled: true,
@@ -181,7 +182,7 @@ const Settings: React.FC = () => {
                 value={settings.api_url}
                 onChange={(e) => setSettings({ ...settings, api_url: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500 bg-gray-700 text-white placeholder-gray-400"
-                placeholder="http://localhost:8000"
+                placeholder={apiConfig.apiUrl}
               />
             </div>
             
@@ -194,7 +195,7 @@ const Settings: React.FC = () => {
                 value={settings.websocket_url}
                 onChange={(e) => setSettings({ ...settings, websocket_url: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500 bg-gray-700 text-white placeholder-gray-400"
-                placeholder="ws://localhost:8000/ws"
+                placeholder={apiConfig.wsUrl}
               />
             </div>
 

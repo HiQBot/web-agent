@@ -11,6 +11,7 @@ import {
   LinkIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { buildApiUrl, apiConfig } from '../config/api';
 
 interface TestPlan {
   id: string;
@@ -38,7 +39,7 @@ const TestPlans: React.FC = () => {
   const { data: testPlans, isLoading } = useQuery<TestPlan[]>({
     queryKey: ['testPlans'],
     queryFn: async () => {
-      const response = await fetch('/api/v1/tests/test-plans');
+      const response = await fetch(buildApiUrl(apiConfig.endpoints.tests.testPlans));
       const data = await response.json();
       return data.test_plans || [];
     },
@@ -49,7 +50,7 @@ const TestPlans: React.FC = () => {
   // Create test plan mutation
   const createPlanMutation = useMutation({
     mutationFn: async (planData: typeof newPlan) => {
-      const response = await fetch('/api/v1/tests/test-plans', {
+      const response = await fetch(buildApiUrl(apiConfig.endpoints.tests.testPlans), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(planData),

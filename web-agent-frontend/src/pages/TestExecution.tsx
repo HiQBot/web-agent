@@ -54,7 +54,7 @@ const TestExecution: React.FC = () => {
     queryKey: ['runningTests'],
     queryFn: async () => {
       try {
-        const response = await fetch('/api/v1/tests/test-plans');
+        const response = await fetch(buildApiUrl(apiConfig.endpoints.tests.testPlans));
         if (!response.ok) {
           throw new Error('Failed to fetch running tests');
         }
@@ -74,7 +74,7 @@ const TestExecution: React.FC = () => {
     queryFn: async () => {
       if (!selectedTest) return null;
       try {
-        const response = await fetch(`/api/v1/tests/test-plans/${selectedTest}`);
+        const response = await fetch(buildApiUrl(apiConfig.endpoints.tests.getById(selectedTest)));
         if (!response.ok) {
           throw new Error('Failed to fetch test details');
         }

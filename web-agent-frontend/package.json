@@ -2,6 +2,7 @@
   "name": "web-agent-frontend",
   "version": "1.0.0",
   "description": "React frontend for HiQBot Web Agent Platform",
+  "license": "MIT",
   "private": true,
   "dependencies": {
     "@heroicons/react": "^2.0.18",
@@ -71,6 +72,5 @@
     "craco": "^0.0.3",
     "eslint": "^8.54.0",
     "serve": "^14.2.1"
-  },
-  "proxy": "http://localhost:8000"
+  }
 }

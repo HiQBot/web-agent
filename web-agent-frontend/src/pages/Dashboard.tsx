@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/use-toast';
 import BrowserAutomationModal from '../components/BrowserAutomationModal';
+import { apiConfig } from '../config/api';
 
 interface TestPlan {
   id: string;
@@ -360,7 +361,7 @@ const Dashboard: React.FC = () => {
                     id: 'live_preview',
                     name: 'Live Browser Preview',
                     description: 'View live browser window',
-                    url: 'http://localhost:8080',
+                    url: apiConfig.browserUrl,
                     status: 'running',
                     created_at: new Date().toISOString(),
                   });
@@ -484,7 +485,7 @@ const Dashboard: React.FC = () => {
         testName={selectedTest?.name || 'Test Automation'}
         task={selectedTest?.description || 'Automated testing task'}
         startUrl={selectedTest?.url}
-        browserUrl="http://localhost:8080"
+        browserUrl={apiConfig.browserUrl}
       />
     </div>
   );
