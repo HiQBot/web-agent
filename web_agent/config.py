@@ -34,8 +34,9 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
 
     # Google/Gemini Settings
-    gemini_api_key: Optional[str] = None
-    gemini_model: Optional[str] = None
+    google_api_key: Optional[str] = None  # Primary key name (GOOGLE_API_KEY)
+    gemini_api_key: Optional[str] = None  # Alias (GEMINI_API_KEY)
+    gemini_model: str = "gemini-2.5-flash"  # Default Gemini model
 
     # Browser Settings (CDP & browser)
     headless: bool = False  # Set to False for headful browser (kernel-docker container)
