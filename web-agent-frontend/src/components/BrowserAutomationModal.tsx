@@ -57,7 +57,11 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
   const [status, setStatus] = useState<'connecting' | 'running' | 'completed' | 'error'>('connecting');
   const [stepCount, setStepCount] = useState(0);
   const [currentNode, setCurrentNode] = useState<string>('');
+  const [browserProvider, setBrowserProvider] = useState<'chrome' | 'onkernal' | null>(null);
+  const [streamingType, setStreamingType] = useState<'webrtc' | 'screencast' | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const browserWsRef = useRef<WebSocket | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const panelGroupRef = useRef<HTMLDivElement>(null);
@@ -73,6 +77,52 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
 
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const setupChromeScreencast = () => {
+    const clientId = `browser_${Date.now()}`;
+    const wsUrl = `${buildWsUrl('/ws/browser-stream')}?client_id=${clientId}&browser_url=${encodeURIComponent(browserUrl)}`;
+
+    console.log('🔌 Connecting to Chrome screencast WebSocket:', wsUrl);
+    const ws = new WebSocket(wsUrl);
+    browserWsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('✅ Chrome screencast WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'connected') {
+          console.log('📺 Chrome screencast connected:', data.streaming_type);
+        } else if (data.type === 'screencast_frame' && canvasRef.current) {
+          // Render frame to canvas
+          const canvas = canvasRef.current;
+          const ctx = canvas.getContext('2d');
+          if (ctx && data.data) {
+            const img = new Image();
+            img.onload = () => {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              ctx.drawImage(img, 0, 0);
+            };
+            img.src = `data:image/jpeg;base64,${data.data}`;
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing Chrome screencast message:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('Chrome screencast WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      console.log('Chrome screencast WebSocket disconnected');
+    };
   };
 
   useEffect(() => {
@@ -116,7 +166,7 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
           
           // Update browser viewport via API
           try {
-            const response = await fetch(`${buildApiUrl(apiConfig.endpoints.browser.stream)}?width=${Math.round(browserWidth)}&height=${Math.round(browserHeight)}`, {
+            const response = await fetch(`${buildApiUrl('/browser/viewport')}?width=${Math.round(browserWidth)}&height=${Math.round(browserHeight)}`, {
               method: 'POST',
             });
             if (response.ok) {
@@ -167,7 +217,32 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      // If this is just a live preview (no task), don't connect to WebSocket
+      // Detect browser provider on modal open
+      const detectProvider = async () => {
+        try {
+          const response = await fetch(buildApiUrl('/browser/status'));
+          if (response.ok) {
+            const data = await response.json();
+            console.log('📊 Browser provider detected:', data.provider);
+            setBrowserProvider(data.provider);
+            setStreamingType(data.streaming_type);
+
+            // If Chrome, set up WebSocket screencast
+            if (data.provider === 'chrome') {
+              setupChromeScreencast();
+            }
+          }
+        } catch (error) {
+          console.error('Failed to detect browser provider:', error);
+          // Default to onkernal if detection fails
+          setBrowserProvider('onkernal');
+          setStreamingType('webrtc');
+        }
+      };
+
+      detectProvider();
+
+      // If this is just a live preview (no task), don't connect to automation WebSocket
       if (testId === 'live_preview' || !task || task === 'View live browser window') {
         addLog('info', '🖥️ Live browser preview mode');
         addLog('info', `📺 Viewing: ${browserUrl}`);
@@ -410,15 +485,30 @@ const BrowserAutomationModal: React.FC<BrowserAutomationModalProps> = ({
           >
             {/* Browser View Panel - Maximum space */}
             <ResizablePanel defaultSize={85} minSize={60}>
-              <div className="h-full w-full bg-black relative m-0 p-0 overflow-hidden" style={{ minHeight: 0 }}>
-                <iframe
-                  src={browserUrl}
-                  className="w-full h-full border-0 m-0 p-0 block"
-                  title="Live Browser Automation"
-                  sandbox="allow-same-origin allow-scripts allow-forms"
-                  allow="fullscreen"
-                  style={{ minHeight: 0, height: '100%' }}
-                />
+              <div className="h-full w-full bg-black relative m-0 p-0 overflow-hidden flex items-center justify-center" style={{ minHeight: 0 }}>
+                {streamingType === 'screencast' ? (
+                  // Chrome screencast via WebSocket
+                  <canvas
+                    ref={canvasRef}
+                    className="max-w-full max-h-full"
+                    style={{ imageRendering: 'auto' }}
+                  />
+                ) : streamingType === 'webrtc' ? (
+                  // OnKernal WebRTC iframe
+                  <iframe
+                    src={browserUrl}
+                    className="w-full h-full border-0 m-0 p-0 block"
+                    title="Live Browser Automation"
+                    sandbox="allow-same-origin allow-scripts allow-forms"
+                    allow="fullscreen"
+                    style={{ minHeight: 0, height: '100%' }}
+                  />
+                ) : (
+                  // Loading state
+                  <div className="text-white text-sm">
+                    Detecting browser provider...
+                  </div>
+                )}
               {/* Overlay indicators */}
               <div className="absolute top-2 right-2 flex gap-2 z-10">
                 {status === 'running' && (

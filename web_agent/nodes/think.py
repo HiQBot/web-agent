@@ -12,13 +12,52 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
-from web_agent.state import QAAgentState
+from typing import Any, Dict, List
+
+from langchain_core.messages import HumanMessage, SystemMessage as LCSystemMessage
+from pydantic import BaseModel
+
 from web_agent.config import settings
 from web_agent.llm import get_llm
 from web_agent.prompts.browser_prompts import SystemPrompt, AgentMessagePrompt
+from web_agent.state import QAAgentState
+from web_agent.tools.browser_actions import BROWSER_TOOLS
 
 logger = logging.getLogger(__name__)
+
+
+class ThinkSummary(BaseModel):
+	evaluation_previous_goal: str
+	memory: str
+	next_goal: str
+	thinking: str | None = None
+
+
+def _tool_call_to_action(tool_call: Any) -> Dict[str, Any]:
+	"""Normalize LangChain tool call objects into plain dict actions."""
+	if tool_call is None:
+		return {}
+
+	if isinstance(tool_call, dict):
+		name = tool_call.get('name')
+		args = tool_call.get('args') or {}
+		call_id = tool_call.get('id')
+	else:
+		name = getattr(tool_call, 'name', None)
+		args = getattr(tool_call, 'args', {}) or {}
+		call_id = getattr(tool_call, 'id', None)
+
+	if not isinstance(args, dict):
+		args = {}
+
+	if not name:
+		return {}
+
+	return {
+		"action_type": name,
+		"params": args,
+		"tool_call_id": call_id,
+	}
 
 # Create logs directory
 LOGS_DIR = Path("logs")
@@ -846,350 +885,225 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         # Initialize LLM and call
         logger.info("Calling LLM to generate action plan with browser prompts...")
         llm = get_llm()
-
-        # Convert browser messages to LangChain format
-        from langchain_core.messages import SystemMessage as LCSystemMessage, HumanMessage
+        
         langchain_messages = [
             LCSystemMessage(content=system_content),
-            HumanMessage(content=user_content if isinstance(user_content, str) else str(user_content))
+            HumanMessage(content=user_content if isinstance(user_content, str) else str(user_content)),
         ]
-
-        # Call LLM with structured output (LangChain pattern)
-        from web_agent.views import AgentOutput
-
-        # Create dynamic ActionModel with current page's actions (browser pattern)
-        # This gives LLM precise schema of available actions
-        action_model = tools.registry.create_action_model(page_url=current_url)
-
-        # Create dynamic AgentOutput with the action model
-        dynamic_agent_output = AgentOutput.type_with_custom_actions(action_model)
-
-        print(f"\n🤖 Calling LLM ({settings.llm_model}) with structured output...")
-        logger.info(f"Using dynamic ActionModel with {len([a for a in tools.registry.registry.actions.keys()])} registered actions")
-
-        # LangChain uses with_structured_output() method, NOT output_format parameter
-        # Use function_calling method for OpenAI compatibility with complex nested schemas
-        structured_llm = llm.with_structured_output(dynamic_agent_output, method="function_calling")
-        raw_response = await structured_llm.ainvoke(langchain_messages)
         
-        # browser pattern: Manually validate the response to match schema (chat_browser_use.py:178)
-        # LangChain's with_structured_output() may return dict or Pydantic model
-        # Convert to dict if needed, then validate against AgentOutput schema
-        try:
-            if isinstance(raw_response, dict):
-                # Already a dict - validate directly
-                completion_data = raw_response
-            else:
-                # Pydantic model or other object - convert to dict
-                completion_data = raw_response.model_dump() if hasattr(raw_response, 'model_dump') else dict(raw_response)
-            
-            # Validate against schema (browser pattern)
-            parsed: AgentOutput = dynamic_agent_output.model_validate(completion_data)
-        except Exception as e:
-            logger.error(f"Failed to validate LLM response against AgentOutput schema: {e}")
-            logger.error(f"Raw response type: {type(raw_response)}")
-            logger.error(f"Raw response value: {raw_response}")
-            # Re-raise as ValidationError to match browser pattern
-            from pydantic import ValidationError
-            raise ValidationError(f"LLM response validation failed: {e}") from e
-
-        logger.info(f"LLM response received and validated: {parsed}")
-
-        # Save LLM response
+        method = "json_schema" if settings.llm_provider in ["google", "gemini"] else "function_calling"
+        logger.info(f"Using summary structured output method: {method} for provider: {settings.llm_provider}")
+        
+        summary_llm = llm.with_structured_output(ThinkSummary, method=method)
+        summary_response = await summary_llm.ainvoke(langchain_messages)
+        evaluation_previous_goal = summary_response.evaluation_previous_goal
+        memory = summary_response.memory
+        next_goal = summary_response.next_goal
+        thinking = summary_response.thinking
+        
+        # Execute tool-calling pass
+        tool_directive = HumanMessage(
+            content=(
+                "When you decide on your next browser steps, call the provided tools directly. "
+                "Do not return JSON for actions. Use one tool call per action, in the order you want them executed. "
+                "If the task is complete, call the 'done' tool with the final result."
+            )
+        )
+        llm_with_tools = llm.bind_tools(BROWSER_TOOLS)
+        tool_messages = langchain_messages + [tool_directive]
+        tool_response = await llm_with_tools.ainvoke(tool_messages)
+        assistant_content = getattr(tool_response, "content", None)
+        raw_tool_calls: List[Any] = getattr(tool_response, "tool_calls", []) or []
+        actions: List[Dict[str, Any]] = []
+        for tool_call in raw_tool_calls:
+            normalized = _tool_call_to_action(tool_call)
+            if normalized.get("action_type"):
+                actions.append(normalized)
+        
+        if not actions and assistant_content:
+            logger.info("No tool calls returned but assistant provided summary - interpreting as done.")
+            actions = [{
+                "action_type": "done",
+                "params": {"result": assistant_content, "success": True},
+                "tool_call_id": None,
+            }]
+        
         log_data["llm_response"] = {
-            "parsed_model": parsed.model_dump(),
+            "summary": summary_response.model_dump(),
+            "tool_calls": actions,
             "model": settings.llm_model,
         }
-
+        
+        if not actions:
+            logger.error("No tool calls returned from LLM response.")
+            log_data["error"] = "No tool calls returned"
+            with open(log_file, "w") as f:
+                json.dump(log_data, f, indent=2)
+            return {
+                "error": "No tool calls returned from LLM response.",
+                "step_count": step_count,
+                "actions": [],
+            }
+        
+        # Log parsed actions
         print(f"\n{'='*80}")
-        print(f"📥 RECEIVED FROM LLM (Structured Output)")
+        print(f"📥 RECEIVED FROM LLM (Tool Calling)")
         print(f"{'='*80}")
-        print(f"\n📄 Parsed Model:\n{parsed.model_dump_json(indent=2)}")
-
-        print(f"\n🔍 Extracting fields from structured output...")
-
-        # Extract fields directly from Pydantic model (no JSON parsing needed!)
-        evaluation_previous_goal = parsed.evaluation_previous_goal
-        memory = parsed.memory
-        next_goal = parsed.next_goal
-        thinking = parsed.thinking
-
-        # parsed.action is already list[ActionModel] - use directly!
-        # LangChain with_structured_output() returns validated Pydantic objects
-        # No conversion needed - act node can use ActionModel objects directly
-        planned_actions = parsed.action
-
-        logger.info(f"✅ Structured output: {len(planned_actions)} actions extracted")
-        for i, action in enumerate(planned_actions, 1):
-            logger.debug(f"  Action {i}: {action}")
-
-        # With structured output, no JSON parsing or error handling needed!
-        # The LLM provider validates the response against the Pydantic schema
+        print(f"\n🧠 Summary:\n{summary_response.model_dump_json(indent=2)}")
+        print(f"\n📋 Parsed {len(actions)} tool call(s):")
+        for idx, action in enumerate(actions, 1):
+            print(f"  {idx}. {action['action_type']} {action.get('params')}")
+            logger.debug(f"Action {idx}: {action}")
         
-        logger.debug(f"Parsed {len(planned_actions)} actions: {planned_actions}")
-
-        # Save parsed actions (convert ActionModel to dict for JSON serialization)
-        log_data["parsed_actions"] = [a.model_dump(exclude_unset=True) for a in planned_actions]
-        log_data["extracted_fields"] = {
-            "evaluation_previous_goal": evaluation_previous_goal,
-            "memory": memory,
-            "next_goal": next_goal,
-            "thinking": thinking,
-        }
-        
-        # Print parsed actions
-        print(f"\n📋 Parsed {len(planned_actions)} actions from LLM response:")
-        for i, action in enumerate(planned_actions, 1):
-            print(f"  {i}. {action}")
-        
-        # Check for "done" action from LLM
-        # planned_actions is list[ActionModel] - check using model_dump()
-        has_done_action = any(
-            "done" in action.model_dump(exclude_unset=True)
-            for action in planned_actions
-        )
-
-        # Get existing history early (needed for multiple return paths)
-        existing_history = state.get("history", [])
-
-        # browser pattern: Title and URL are ALREADY in browser_state (<browser_state>)
-        # System prompt says: "Call extract only if the information you are looking for is not visible
-        # in your <browser_state> otherwise always just use the needed text from the <browser_state>."
-        # So if LLM tries to extract title/URL, auto-complete since they're already available
-        extract_actions = [a for a in planned_actions if "extract" in a.model_dump(exclude_unset=True)]
-        for extract_action in extract_actions:
-            action_dump = extract_action.model_dump(exclude_unset=True)
-            extract_params = action_dump.get("extract", {})
-            query = str(extract_params.get("query", "")).lower()
-            # Check if query asks for title/URL (which are already in browser state)
-            if ("title" in query and "url" in query) or ("page title" in query and "url" in query) or \
-               (query == "extract the page title and url"):
-                # Check if we're on a valid page (not about:blank or empty)
+        # Auto-complete extract requests for title/URL
+        for action in actions:
+            if action.get("action_type") != "extract_content":
+                continue
+            params = action.get("params") or {}
+            query = str(params.get("query", "")).lower()
+            if ("title" in query and "url" in query) or ("page title" in query and "url" in query) or query == "extract the page title and url":
                 if current_url and current_url not in ["about:blank", ""] and current_title:
-                    logger.info("LLM wants to extract title/URL - these are already in browser_state, auto-completing")
-                    # Auto-complete with the current title and URL (browser pattern)
+                    logger.info("LLM requested page title/URL - already available, auto-completing task.")
                     done_message = f"Task completed. Page title: {current_title}, URL: {current_url}"
-                    print(f"\n✅ Auto-completing: Title and URL are already in browser state - {done_message}")
-                    logger.info(f"Auto-completed task: {done_message}")
-                    
-                    # Mark as completed
                     log_data["task_completed"] = True
                     log_data["completion_message"] = done_message
-                    
                     with open(log_file, "w") as f:
                         json.dump(log_data, f, indent=2)
-                    
                     return {
                         "step_count": step_count,
-                        "planned_actions": [],  # No actions needed - title/URL already available
+                        "actions": [],
                         "completed": True,
                         "browser_state_summary": browser_state_summary,
                         "dom_selector_map": selector_map,
-                        "history": [{  # operator.add will append to existing
+                        "history": [{
                             "step": step_count,
                             "node": "think",
-                            "planned_actions": [],
+                            "actions": [],
                             "task_completed": True,
                             "completion_message": done_message,
                         }],
                         "current_goal": f"Task completed: {done_message[:50]}",
                     }
-
+        
+        has_done_action = any(action.get("action_type") == "done" for action in actions)
         if has_done_action:
-            done_action = next((
-                a for a in planned_actions
-                if "done" in a.model_dump(exclude_unset=True)
-            ), None)
-            if done_action:
-                done_params = done_action.model_dump(exclude_unset=True).get("done", {})
-                done_message = done_params.get("text", "Task completed")
-            else:
-                done_message = "Task completed"
+            done_action = next((a for a in actions if a.get("action_type") == "done"), None)
+            done_params = (done_action or {}).get("params") or {}
+            done_message = done_params.get("result") or done_params.get("text") or "Task completed"
             print(f"\n✅ LLM signaled task completion: {done_message}")
             logger.info(f"LLM completed task: {done_message}")
-            
-            # Save completion (convert ActionModel to dict for JSON serialization)
-            log_data["validated_actions"] = [a.model_dump(exclude_unset=True) for a in planned_actions]
             log_data["task_completed"] = True
             log_data["completion_message"] = done_message
-
             with open(log_file, "w") as f:
                 json.dump(log_data, f, indent=2)
-            
             return {
                 "step_count": step_count,
-                "planned_actions": planned_actions,
-                "completed": True,  # Signal completion
+                "actions": actions,
+                "completed": True,
                 "browser_state_summary": browser_state_summary,
-                "dom_selector_map": selector_map,  # Cache for ACT node
-                "previous_url": current_url,  # Store for next step comparison
-                "previous_element_count": len(selector_map),  # Store for next step comparison
-                "history": [{  # operator.add will append to existing
+                "dom_selector_map": selector_map,
+                "previous_url": current_url,
+                "previous_element_count": len(selector_map),
+                "history": [{
                     "step": step_count,
                     "node": "think",
-                    "planned_actions": planned_actions,
+                    "actions": actions,
                     "task_completed": True,
                     "completion_message": done_message,
                 }],
                 "current_goal": f"Task completed: {done_message[:50]}",
             }
         
-        # No validation needed - LangChain with_structured_output() already validated via Pydantic
-        # ActionModel objects are guaranteed to be valid by the Pydantic schema
-        valid_actions = planned_actions
-
-        # Save validated actions (convert to dicts for JSON serialization in logs)
-        log_data["validated_actions"] = [a.model_dump(exclude_unset=True) for a in valid_actions]
-
-        if not valid_actions:
-            logger.error("No actions returned from LLM response.")
-            print("\n❌ ERROR: No actions returned from LLM response!")
-
-            # Save error to log file
-            log_data["error"] = "No actions parsed"
-            with open(log_file, "w") as f:
-                json.dump(log_data, f, indent=2)
-
-            return {
-                "error": "No actions returned from LLM response.",
-                "step_count": step_count,
-                "planned_actions": [],
-            }
-        
-        print(f"\n✅ Validated {len(valid_actions)} actions")
-        print(f"{'='*80}\n")
-        
-        # Save complete log to file
+        # Persist interaction log
         log_data["summary"] = {
-            "parsed_count": len(planned_actions),
-            "validated_count": len(valid_actions),
+            "parsed_count": len(actions),
             "success": True,
         }
-        
         with open(log_file, "w") as f:
             json.dump(log_data, f, indent=2)
-        
         print(f"💾 Complete interaction saved to: {log_file}\n")
+        logger.info(f"Generated {len(actions)} planned actions via tool calls")
         
-        logger.info(f"Generated {len(valid_actions)} planned actions")
-        
-        # Update history - create new list (LangGraph best practice: don't mutate state)
-        # Store structured fields for proper history formatting (browser HistoryItem format)
         existing_history = state.get("history", [])
         new_history_entry = {
             "step": step_count,
             "node": "think",
             "browser_state": browser_state_summary,
-            "planned_actions": valid_actions,
-            "llm_response_preview": parsed.model_dump_json()[:200] if parsed else None,
-            "evaluation_previous_goal": evaluation_previous_goal,  # For history formatting
-            "memory": memory,  # For history formatting
-            "next_goal": next_goal,  # For history formatting
-            "thinking": thinking,  # For future use
+            "actions": actions,
+            "llm_response_preview": assistant_content[:200] if isinstance(assistant_content, str) else None,
+            "evaluation_previous_goal": evaluation_previous_goal,
+            "memory": memory,
+            "next_goal": next_goal,
+            "thinking": thinking,
         }
         
-        # Build current goal with more context for retries
         if is_retry:
-            # On retry, provide more context about current state
             current_goal = f"Retry step {step_count} - Current page: {current_title[:30]} ({current_url[:50]})"
-            if valid_actions:
-                first_action_dump = valid_actions[0].model_dump(exclude_unset=True)
-                action_name = list(first_action_dump.keys())[0] if first_action_dump else 'unknown'
-                current_goal += f" - Next: {action_name}"
+            if actions:
+                current_goal += f" - Next: {actions[0].get('action_type')}"
         else:
-            if valid_actions:
-                first_action_dump = valid_actions[0].model_dump(exclude_unset=True)
-                # Try to get reasoning from action params if available
-                action_params = list(first_action_dump.values())[0] if first_action_dump else {}
-                reasoning = action_params.get('reasoning', '') if isinstance(action_params, dict) else ''
+            if actions:
+                reasoning = actions[0].get("params", {}).get("reasoning", "")
                 current_goal = f"Executing step {step_count}: {reasoning[:50]}"
             else:
                 current_goal = f"Executing step {step_count}"
         
-        # Action repetition detection (prevent infinite loops of same action)
-        # Compare current action with previous action from history
+        # Action repetition detection
         previous_action = None
         if existing_history:
-            # Get most recent think node action (stored as ActionModel in state)
             for entry in reversed(existing_history):
-                if entry.get("node") == "think" and entry.get("planned_actions"):
-                    prev_actions = entry["planned_actions"]
+                if entry.get("node") == "think" and entry.get("actions"):
+                    prev_actions = entry["actions"]
                     previous_action = prev_actions[0] if prev_actions else None
                     break
-
-        current_action = valid_actions[0] if valid_actions else None
+        
+        current_action = actions[0] if actions else None
         action_repetition_count = state.get("action_repetition_count", 0)
-
-        # Check if repeating same action (same action type and same index)
         if previous_action and current_action:
-            # Both are ActionModel objects - compare their dumps
-            prev_dump = previous_action.model_dump(exclude_unset=True) if hasattr(previous_action, 'model_dump') else previous_action
-            curr_dump = current_action.model_dump(exclude_unset=True)
-
-            # Get action name and index from both
-            prev_action_name = list(prev_dump.keys())[0] if prev_dump else None
-            curr_action_name = list(curr_dump.keys())[0] if curr_dump else None
-
-            if prev_action_name == curr_action_name:
-                prev_params = prev_dump.get(prev_action_name, {}) if isinstance(prev_dump, dict) else {}
-                curr_params = curr_dump.get(curr_action_name, {})
-                prev_index = prev_params.get('index') if isinstance(prev_params, dict) else None
-                curr_index = curr_params.get('index')
-
-                if prev_index is not None and prev_index == curr_index:
-                    action_repetition_count += 1
-                    logger.warning(f"⚠️ Action repeated {action_repetition_count} times: {curr_action_name} on index {curr_index}")
-
-                    # Force done if repeated 3+ times
-                    if action_repetition_count >= 3:
-                        logger.error(f"🛑 Action repeated {action_repetition_count} times, forcing completion")
-                        return {
-                            "error": f"Action '{curr_action_name}' on index {curr_index} repeated {action_repetition_count} times without success",
-                            "completed": True,
-                            "step_count": step_count,
-                        }
-                else:
-                    # Different index - reset counter
-                    action_repetition_count = 0
+            prev_type = previous_action.get("action_type")
+            curr_type = current_action.get("action_type")
+            prev_index = (previous_action.get("params") or {}).get("index")
+            curr_index = (current_action.get("params") or {}).get("index")
+            if prev_type == curr_type and prev_index is not None and prev_index == curr_index:
+                action_repetition_count += 1
+                logger.warning(f"⚠️ Action repeated {action_repetition_count} times: {curr_type} on index {curr_index}")
+                if action_repetition_count >= 3:
+                    logger.error(f"🛑 Action repeated {action_repetition_count} times, forcing completion")
+                    return {
+                        "error": f"Action '{curr_type}' on index {curr_index} repeated {action_repetition_count} times without success",
+                        "completed": True,
+                        "step_count": step_count,
+                    }
             else:
-                # Different action - reset counter
                 action_repetition_count = 0
         else:
             action_repetition_count = 0
-
-        # Clear tab switch flag after processing (so it doesn't persist to next step)
+        
         state_updates = {
             "step_count": step_count,
-            "planned_actions": valid_actions,
+            "actions": actions,
             "browser_state_summary": browser_state_summary,
-            "dom_selector_map": selector_map,  # Cache for ACT node element lookups
-            "history": [new_history_entry],  # operator.add will append to existing
+            "dom_selector_map": selector_map,
+            "history": [new_history_entry],
             "current_goal": current_goal,
-            "previous_url": current_url,  # Track URL for next step to detect tab/URL changes
-            "previous_element_count": len(selector_map),  # Track element count for dynamic loading detection
-            # Goal tracking updates
-            # Note: completed_goals uses reducer (operator.add), so we return only NEW items
-            # The reducer will append them to the existing list automatically
+            "previous_url": current_url,
+            "previous_element_count": len(selector_map),
             "completed_goals": [new_completed_goal_id] if new_completed_goal_id else [],
             "current_goal_index": current_goal_index,
-            # Action repetition tracking
             "action_repetition_count": action_repetition_count,
+            "thoughts": thinking or assistant_content or "",
         }
         
-        # Clear tab switch flags after processing
         if just_switched_tab:
             state_updates["just_switched_tab"] = False
             state_updates["tab_switch_url"] = None
             state_updates["tab_switch_title"] = None
         
-        # Clear fresh_state_available flag after using it (so it doesn't persist)
         if fresh_state_available:
             state_updates["fresh_state_available"] = False
-            state_updates["fresh_browser_state_object"] = None  # Clear object to free memory
+            state_updates["fresh_browser_state_object"] = None
             state_updates["page_changed"] = False
         
-        # CRITICAL: Persist FileSystem state for todo.md tracking (Phase 1)
-        # Save FileSystem state so it persists across steps
         file_system_state = file_system.get_state()
         state_updates["file_system_state"] = file_system_state
         logger.debug("Saved FileSystem state (todo.md will persist)")
@@ -1200,6 +1114,6 @@ async def think_node(state: QAAgentState) -> Dict[str, Any]:
         return {
             "error": f"Think node error: {str(e)}",
             "step_count": state.get("step_count", 0),
-            "planned_actions": [],
+            "actions": [],
         }
 

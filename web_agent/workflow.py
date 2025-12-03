@@ -18,8 +18,8 @@ def should_continue_after_think(state: QAAgentState) -> Literal["continue", "don
     Router function to determine next node after think.
 
     Computer-Use Architecture:
-    - THINK outputs: planned_actions (direct action list from full DOM analysis)
-    - If planned_actions exist → continue to ACT for execution
+    - THINK outputs: actions (direct tool-call list from full DOM analysis)
+    - If actions exist → continue to ACT for execution
     - If goal transition (no actions but more goals) → replan (loop to THINK)
     - If task completed or no more actions/goals → done (go to report)
     - Error handling with max failures
@@ -57,10 +57,10 @@ def should_continue_after_think(state: QAAgentState) -> Literal["continue", "don
             logger.warning(f"⏸️  Max steps reached: {step_count}/{max_steps}")
             return "done"
 
-        # Computer-use flow: Check if THINK generated planned actions
-        planned_actions = state.get("planned_actions", [])
-        if planned_actions:
-            logger.info(f"📋 THINK generated {len(planned_actions)} planned actions → routing to ACT")
+        # Computer-use flow: Check if THINK generated actions
+        actions = state.get("actions", [])
+        if actions:
+            logger.info(f"📋 THINK generated {len(actions)} planned actions → routing to ACT")
             return "continue"  # Go to ACT for execution
 
         # Check if this is a goal transition (empty actions but more goals to do)

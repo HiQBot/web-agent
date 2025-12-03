@@ -1,7 +1,8 @@
 """
 Browser Stream Routes
 
-WebSocket endpoint for proxying live browser view from Docker container.
+WebSocket endpoint for proxying live browser view.
+Supports both OnKernal (WebRTC) and Chrome (CDP screencast) browsers.
 """
 import logging
 import asyncio
@@ -9,8 +10,37 @@ import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Optional
 
+from web_agent.config import settings
+from web_agent.browser.providers import get_browser_provider
+from web_agent.utils.browser_manager import create_browser_session
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.post("/browser/init-persistent")
+async def init_persistent_browser():
+    """
+    Initialize a persistent browser session for Live Preview.
+    
+    This endpoint is called when the user clicks "Show Browser" in Live Preview.
+    It creates a browser session that can be streamed via WebSocket.
+    """
+    try:
+        logger.info("Initializing persistent browser session for Live Preview")
+        session_id, session = await create_browser_session()
+        logger.info(f"✅ Browser session created: {session_id}")
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "message": "Browser session initialized for Live Preview"
+        }
+    except Exception as e:
+        logger.error(f"Failed to initialize browser session: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Failed to initialize browser session: {str(e)}"
+        }
 
 
 class BrowserStreamManager:
@@ -42,27 +72,144 @@ async def browser_stream_websocket(
     browser_url: str = Query("http://localhost:8080", description="Browser view URL")
 ):
     """
-    WebSocket endpoint for streaming live browser view
+    WebSocket endpoint for streaming live browser view.
 
-    This endpoint proxies the browser view from the Docker container (localhost:8080)
-    and streams it to the frontend via WebSocket.
+    Supports both OnKernal (WebRTC) and Chrome (CDP screencast) browsers.
+    For OnKernal: Returns WebRTC iframe URL
+    For Chrome: Streams screencast frames via WebSocket
 
     Usage:
         ws://localhost:8000/api/v1/ws/browser-stream?client_id=123&browser_url=http://localhost:8080
-
-    The frontend should use this to display the live browser automation view.
     """
+    provider = get_browser_provider()
+    provider_name = type(provider).__name__
+
+    logger.info(f"🔌 WebSocket connection request from client {client_id}")
+    logger.info(f"🌐 Browser provider: {provider_name}")
+
     await stream_manager.connect(websocket, client_id)
 
     try:
-        # Send initial connection message
+        # For Chrome provider, set up screencast streaming
+        if provider_name == "ChromeProvider":
+            logger.info("📺 Chrome provider detected - setting up screencast streaming")
+            try:
+                from web_agent.utils.session_registry import _SESSION_REGISTRY
+                from web_agent.browser.session import BrowserSession
+                from web_agent.browser.providers.chrome_streaming import ChromeStreamingServer
+                import asyncio
+
+                # Wait for browser session to be created (with timeout)
+                browser_session: BrowserSession | None = None
+                max_wait = 30  # Wait up to 30 seconds
+                wait_interval = 0.5
+
+                logger.info(f"⏳ Waiting for Chrome browser session (max {max_wait}s)...")
+                logger.info(f"📋 Current sessions in registry: {list(_SESSION_REGISTRY.keys())}")
+                for attempt in range(int(max_wait / wait_interval)):
+                    for session_id, session in _SESSION_REGISTRY.items():
+                        if isinstance(session, BrowserSession) and hasattr(session, '_cdp_client_root') and session._cdp_client_root:
+                            browser_session = session
+                            logger.info(f"Found browser session: {session_id}")
+                            break
+                    
+                    if browser_session:
+                        break
+                    
+                    await asyncio.sleep(wait_interval)
+                
+                if browser_session and browser_session._cdp_client_root:
+                    logger.info("✅ Browser session found! Setting up Chrome screencast streaming")
+                    logger.info(f"📡 CDP client root available: {browser_session._cdp_client_root is not None}")
+
+                    # Send initial connection message
+                    connection_msg = {
+                        "type": "connected",
+                        "message": "Chrome browser stream connected",
+                        "provider": "chrome",
+                        "browser_url": provider.get_viewer_url(),
+                        "streaming_type": "screencast"
+                    }
+                    logger.info(f"📤 Sending connection message: {connection_msg}")
+                    await websocket.send_json(connection_msg)
+                    
+                    # Create streaming server instance (websocket already accepted)
+                    logger.info("🎬 Creating ChromeStreamingServer instance")
+                    streaming_server = ChromeStreamingServer(
+                        cdp_client=browser_session._cdp_client_root,
+                        streaming_port=settings.streaming_port
+                    )
+
+                    # Add client (websocket already accepted by stream_manager.connect)
+                    logger.info("➕ Adding client to streaming server")
+                    await streaming_server.add_client(websocket, already_accepted=True)
+                    logger.info("✅ Client added, screencast should be streaming now")
+                    
+                    # Handle client messages and keep connection alive
+                    try:
+                        while True:
+                            try:
+                                data = await websocket.receive_json()
+                                if data.get("type") == "ping":
+                                    await websocket.send_json({"type": "pong"})
+                                elif data.get("type") == "disconnect":
+                                    break
+                            except WebSocketDisconnect:
+                                break
+                            except Exception as e:
+                                logger.debug(f"Error receiving message: {e}")
+                                break
+                    finally:
+                        await streaming_server.remove_client(websocket)
+                    
+                    return
+                else:
+                    logger.warning("Browser session not found - Chrome may not be running yet")
+                    # Send message indicating browser not ready
+                    await websocket.send_json({
+                        "type": "connected",
+                        "message": "Waiting for Chrome browser session...",
+                        "provider": "chrome",
+                        "browser_url": provider.get_viewer_url(),
+                        "streaming_type": "screencast",
+                        "status": "waiting"
+                    })
+                    # Keep connection alive and wait for browser session
+                    while True:
+                        try:
+                            data = await websocket.receive_json()
+                            if data.get("type") == "ping":
+                                await websocket.send_json({"type": "pong"})
+                            # Check again for browser session
+                            for session_id, session in _SESSION_REGISTRY.items():
+                                if isinstance(session, BrowserSession) and hasattr(session, '_cdp_client_root') and session._cdp_client_root:
+                                    logger.info("Browser session found, restarting streaming setup")
+                                    # Reconnect with streaming
+                                    await websocket.send_json({
+                                        "type": "reconnect",
+                                        "message": "Browser session found, reconnecting..."
+                                    })
+                                    break
+                        except WebSocketDisconnect:
+                            break
+                    return
+            except Exception as e:
+                logger.error(f"Failed to set up Chrome streaming: {e}", exc_info=True)
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Failed to set up Chrome streaming: {str(e)}"
+                })
+        
+        # For OnKernal provider: Send initial connection message
         await websocket.send_json({
             "type": "connected",
             "message": "Browser stream connected",
-            "browser_url": browser_url
+            "provider": provider_name.lower().replace("provider", ""),
+            "browser_url": provider.get_viewer_url(),
+            "streaming_type": "webrtc"
         })
 
-        # Keep connection alive and listen for client messages
+        # For OnKernal or fallback: Keep connection alive and listen for client messages
         while True:
             try:
                 # Receive messages from client
@@ -103,8 +250,11 @@ async def browser_stream_websocket(
 
 @router.get("/browser/status")
 async def browser_status():
-    """Get browser stream status"""
+    """Get browser stream status and provider information"""
     try:
+        provider = get_browser_provider()
+        provider_name = type(provider).__name__.replace("Provider", "").lower()
+
         # Check if browser container is accessible
         async with httpx.AsyncClient(timeout=5.0) as client:
             try:
@@ -114,16 +264,19 @@ async def browser_status():
                 browser_accessible = False
 
         return {
+            "provider": provider_name,  # "chrome" or "onkernal"
+            "streaming_type": "screencast" if provider_name == "chrome" else "webrtc",
             "browser_accessible": browser_accessible,
-            "browser_url": "http://localhost:8080",
-            "cdp_url": "http://localhost:9222",
+            "browser_url": provider.get_viewer_url(),
+            "cdp_url": provider.get_cdp_url() if hasattr(provider, 'get_cdp_url') else "http://localhost:9222",
             "active_streams": len(stream_manager.active_streams),
             "connected_clients": list(stream_manager.active_streams.keys())
         }
     except Exception as e:
         return {
             "error": str(e),
-            "browser_accessible": False
+            "browser_accessible": False,
+            "provider": "unknown"
         }
 
 
@@ -163,6 +316,15 @@ async def browser_health():
         return {
             "error": str(e)
         }
+
+
+@router.post("/browser/stream")
+async def browser_stream_resize(width: int, height: int):
+    """
+    Legacy endpoint for browser viewport resize.
+    Redirects to /browser/viewport for backwards compatibility.
+    """
+    return await set_browser_viewport(width, height)
 
 
 @router.post("/browser/viewport")

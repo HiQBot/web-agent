@@ -8,17 +8,26 @@ This node:
 4. Captures action results
 """
 import logging
-from typing import Dict, Any
-from web_agent.state import QAAgentState
-from web_agent.config import settings
-from web_agent.utils.session_registry import get_session
-from web_agent.tools.service import Tools
-from typing import TYPE_CHECKING
+from typing import Any, Dict, List
 
-if TYPE_CHECKING:
-	from web_agent.agent.views import ActionModel
+from web_agent.config import settings
+from web_agent.llm import get_llm
+from web_agent.state import QAAgentState
+from web_agent.tools.browser_actions import (
+	BROWSER_TOOLS,
+	BrowserToolContext,
+	reset_browser_tool_context,
+	set_browser_tool_context,
+)
+from web_agent.tools.service import Tools
+from web_agent.utils.session_registry import get_session
 
 logger = logging.getLogger(__name__)
+
+TOOL_MAP = {tool.name: tool for tool in BROWSER_TOOLS}
+FILE_SYSTEM_ACTIONS = {"extract_content", "write_file", "read_file", "upload_file", "replace_file"}
+PAGE_CHANGING_ACTIONS = {"navigate", "switch", "switch_tab", "go_back"}
+DOM_CHANGING_ACTIONS = {"click", "input_text", "scroll", "toggle_checkbox", "select_dropdown"}
 
 
 async def act_node(state: QAAgentState) -> Dict[str, Any]:
@@ -52,16 +61,16 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 			"action_results": [],
 		}
 
-	# Get planned actions
-	planned_actions = state.get("planned_actions", [])
+	# Get normalized tool-call actions
+	actions = state.get("actions", [])
 
 	print(f"\n{'='*80}")
 	print(f"🎭 ACT NODE - Executing Actions via browser Tools")
 	print(f"{'='*80}")
-	print(f"📋 Planned Actions: {len(planned_actions)}")
+	print(f"📋 Planned Actions: {len(actions)}")
 	print(f"🌐 Browser Session: {browser_session_id[:16]}...")
 
-	if not planned_actions:
+	if not actions:
 		logger.warning("No planned actions to execute")
 		print(f"⚠️  No actions to execute\n")
 		return {
@@ -96,142 +105,76 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	# Initialize Tools instance
 	logger.info("Initializing browser Tools")
 	tools = Tools()
-	
-	# Get dynamic ActionModel class from Tools registry (browser recommended approach)
-	# This creates ActionModel with all registered actions dynamically from the registry
-	# This ensures we always have the correct action fields matching registered action names
-	DynamicActionModel = tools.registry.create_action_model(page_url=None)
 
 	# Execute actions sequentially
-	executed_actions = []
-	action_results = []
+	executed_actions: List[Dict[str, Any]] = []
+	action_results: List[Dict[str, Any]] = []
+	available_file_paths = state.get("available_file_paths", [])
+	sensitive_data = state.get("sensitive_data")
+	file_system_cache = None
 
-	for i, action_item in enumerate(planned_actions, 1):
-		# Convert ActionModel to dict if needed (planned_actions contains ActionModel objects from LLM)
-		if hasattr(action_item, 'model_dump'):
-			# It's a Pydantic ActionModel - convert to dict
-			action_dict_raw = action_item.model_dump(exclude_none=True)
-			# Extract action type from ActionModel structure
-			# ActionModel has structure like: {"click": {...}, "input": {...}, etc.}
-			# Also handle RootModel wrapper: {"root": {"click": {...}}}
-			if "root" in action_dict_raw:
-				# Unwrap RootModel
-				action_dict_raw = action_dict_raw["root"]
-			
-			# Get the first key that represents the action type
-			action_type = None
-			action_params = None
-			for key in action_dict_raw.keys():
-				if key not in ['root']:  # Skip 'root' key if present
-					action_type = key
-					action_params = action_dict_raw[key]
-					break
-			
-			# Flatten the structure: convert {"click": {"index": 4498}} to {"action": "click", "index": 4498}
-			if action_type and action_params:
-				if isinstance(action_params, dict):
-					# Flatten nested params
-					action_dict = {"action": action_type, **action_params}
-				else:
-					# Params is not a dict (shouldn't happen, but handle it)
-					action_dict = {"action": action_type, "params": action_params}
-			else:
-				action_dict = {"action": action_type} if action_type else {}
-		else:
-			# It's already a dict
-			action_dict = action_item
-			action_type = action_dict.get("action") or action_dict.get("type")
-		
+	def get_file_system():
+		nonlocal file_system_cache
+		if file_system_cache is None:
+			from pathlib import Path
+			from web_agent.filesystem.file_system import FileSystem
+
+			file_system_dir = Path("web_agent_workspace") / f"session_{browser_session_id[:8]}"
+			file_system_cache = FileSystem(base_dir=file_system_dir, create_default_files=False)
+		return file_system_cache
+
+	for i, action in enumerate(actions, 1):
+		action_type = action.get("action_type")
+		params = action.get("params") or {}
+		tool_call_id = action.get("tool_call_id")
+
 		if not action_type:
-			logger.warning(f"Could not determine action type from: {action_item}")
-			print(f"    ⚠️  Skipping action with unknown type")
+			logger.warning(f"Could not determine action type from: {action}")
+			print("    ⚠️  Skipping action with unknown type")
 			continue
-		
-		print(f"\n  [{i}/{len(planned_actions)}] Executing: {action_type}")
 
-		try:
-			# Convert our action dict to browser ActionModel
-			# Pass tools registry for param model lookups
-			action_model = convert_to_action_model(action_dict, DynamicActionModel, tools.registry)
-
-			if not action_model:
-				logger.warning(f"Could not convert action to ActionModel: {action_dict}")
-				print(f"    ⚠️  Skipping invalid action: {action_type}")
-				action_results.append({
-					"success": False,
-					"action": action_dict,
-					"error": "Invalid action format",
-					"extracted_content": None,
-					"is_done": False,
-				})
-				continue
-
-			# Execute action via browser Tools
-			# browser extract action requires page_extraction_llm
-			# Get LLM instance for extract actions (browser pattern)
-			page_extraction_llm = None
-			if action_type == "extract":
-				from web_agent.llm import get_llm
-				page_extraction_llm = get_llm()
-				logger.info(f"Extract action detected - providing page_extraction_llm to Tools.act()")
-			
-			# Get file_system from state (created in think node)
-			file_system = None
-			if action_type == "extract" or action_type in ["write_file", "read_file", "replace_file"]:
-				# File system is needed for extract and file operations
-				# It's created fresh in each think cycle
-				from web_agent.filesystem.file_system import FileSystem
-				from pathlib import Path
-				browser_session_id = state.get("browser_session_id", "unknown")
-				file_system_dir = Path("web_agent_workspace") / f"session_{browser_session_id[:8]}"
-				file_system = FileSystem(base_dir=file_system_dir, create_default_files=False)  # Don't recreate files
-
-			logger.info(f"Executing {action_type} via Tools.act()")
-			result = await tools.act(
-				action=action_model,
-				browser_session=session,
-				page_extraction_llm=page_extraction_llm,  # Required for extract actions
-				file_system=file_system,  # Required for extract and file operations
-			)
-
-			# Extract all result data (browser ActionResult fields)
-			success = result.error is None
-			extracted_content = result.extracted_content
-			error_msg = result.error
-			is_done = result.is_done
-			long_term_memory = result.long_term_memory
-			include_extracted_content_only_once = result.include_extracted_content_only_once
-			images = result.images
-			metadata = result.metadata
-			success_flag = result.success  # May be None for non-done actions
-
-			logger.info(f"Action {action_type} {'succeeded' if success else 'failed'}: {extracted_content or error_msg}")
-			print(f"    ✅ {action_type} completed" if success else f"    ❌ {action_type} failed: {error_msg}")
-
-			# Store complete result (all browser ActionResult fields)
-			action_results.append({
-				"success": success,
-				"action": action_dict,
-				"extracted_content": extracted_content,
-				"error": error_msg,
-				"is_done": is_done,
-				"long_term_memory": long_term_memory,
-				"include_extracted_content_only_once": include_extracted_content_only_once,
-				"images": images,
-				"metadata": metadata,
-				"success_flag": success_flag,  # browser success flag (None for regular actions)
-			})
-			executed_actions.append(action_dict)
-
-		except Exception as e:
-			# browser pattern: Tools.act() catches BrowserError, TimeoutError, and general exceptions
-			# and returns ActionResult with error field set
-			# If we get here, it's an exception during conversion or Tools initialization
-			logger.error(f"Error executing action {action_type}: {e}", exc_info=True)
-			print(f"    ❌ Exception: {str(e)[:100]}")
+		print(f"\n  [{i}/{len(actions)}] Executing: {action_type}")
+		tool = TOOL_MAP.get(action_type)
+		if not tool:
+			logger.error(f"Unknown action: {action_type}")
 			action_results.append({
 				"success": False,
-				"action": action_dict,
+				"action": action,
+				"error": f"Unknown action: {action_type}",
+				"extracted_content": None,
+				"is_done": False,
+				"long_term_memory": None,
+				"include_extracted_content_only_once": False,
+				"images": None,
+				"metadata": None,
+			})
+			continue
+
+		page_extraction_llm = None
+		if action_type == "extract_content":
+			page_extraction_llm = get_llm()
+
+		file_system = None
+		if action_type in FILE_SYSTEM_ACTIONS:
+			file_system = get_file_system()
+
+		ctx = BrowserToolContext(
+			browser_session=session,
+			tools=tools,
+			file_system=file_system,
+			page_extraction_llm=page_extraction_llm,
+			available_file_paths=available_file_paths,
+			sensitive_data=sensitive_data,
+		)
+
+		token = set_browser_tool_context(ctx)
+		try:
+			result = await tool.ainvoke(params)
+		except Exception as e:
+			logger.error(f"Error executing action {action_type}: {e}", exc_info=True)
+			action_results.append({
+				"success": False,
+				"action": action,
 				"error": str(e),
 				"extracted_content": None,
 				"is_done": False,
@@ -240,8 +183,39 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 				"images": None,
 				"metadata": None,
 			})
+			continue
+		finally:
+			reset_browser_tool_context(token)
 
-	print(f"\n✅ Executed {len(executed_actions)}/{len(planned_actions)} actions")
+		success = result.error is None
+		extracted_content = result.extracted_content
+		error_msg = result.error
+		is_done = result.is_done
+		long_term_memory = result.long_term_memory
+		include_extracted_content_only_once = result.include_extracted_content_only_once
+		images = result.images
+		metadata = result.metadata
+		success_flag = result.success
+
+		logger.info(f"Action {action_type} {'succeeded' if success else 'failed'}: {extracted_content or error_msg}")
+		print(f"    ✅ {action_type} completed" if success else f"    ❌ {action_type} failed: {error_msg}")
+
+		action_results.append({
+			"success": success,
+			"action": action,
+			"tool_call_id": tool_call_id,
+			"extracted_content": extracted_content,
+			"error": error_msg,
+			"is_done": is_done,
+			"long_term_memory": long_term_memory,
+			"include_extracted_content_only_once": include_extracted_content_only_once,
+			"images": images,
+			"metadata": metadata,
+			"success_flag": success_flag,
+		})
+		executed_actions.append(action)
+
+	print(f"\n✅ Executed {len(executed_actions)}/{len(actions)} actions")
 	print(f"{'='*80}\n")
 
 	# CRITICAL: Wait for DOM stability after actions (browser pattern)
@@ -260,21 +234,21 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	
 	# Clear cache if actions might have changed the page/DOM
 	# Check all executed actions to see if any are page-changing
-	page_changing_action_types = ["navigate", "switch", "go_back"]
-	dom_changing_action_types = ["click", "input", "scroll"]
+	page_changing_action_types = PAGE_CHANGING_ACTIONS
+	dom_changing_action_types = DOM_CHANGING_ACTIONS
 	
 	has_page_changing_action = any(
-		a.get("action") in page_changing_action_types 
+		a.get("action_type") in page_changing_action_types 
 		for a in executed_actions
 	)
 	has_dom_changing_action = any(
-		a.get("action") in dom_changing_action_types 
+		a.get("action_type") in dom_changing_action_types 
 		for a in executed_actions
 	)
 	
 	if has_page_changing_action or has_dom_changing_action:
 		# Clear cache for any action that might change DOM
-		action_type = executed_actions[-1].get("action") if executed_actions else "unknown"
+		action_type = executed_actions[-1].get("action_type") if executed_actions else "unknown"
 		await clear_cache_if_needed(session, action_type, previous_url)
 	
 	# Phase 2: Adaptive DOM change detection - wait until DOM stabilizes
@@ -320,8 +294,11 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	last_action = executed_actions[-1] if executed_actions else None
 	action_context = None
 	if last_action:
-		action_type = last_action.get("action", "unknown")
-		action_index = last_action.get("index") or last_action.get("click", {}).get("index") or last_action.get("input", {}).get("index")
+		action_type = last_action.get("action_type", "unknown")
+		action_index = (
+			last_action.get("params", {}).get("index")
+			or last_action.get("params", {}).get("element_index")
+		)
 
 		# Build enhanced action context with new element details
 		action_context = {
@@ -433,8 +410,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	# This ensures think node provides context about the new page structure
 	# Handle both dict format and ActionModel format
 	just_switched_tab = any(
-		(isinstance(a, dict) and (a.get("action") == "switch" or a.get("action") == "switch_tab" or "switch" in a)) or
-		(hasattr(a, 'model_dump') and ("switch" in str(a.model_dump()) or "switch_tab" in str(a.model_dump())))
+		isinstance(a, dict) and a.get("action_type") in {"switch", "switch_tab"}
 		for a in executed_actions
 	)
 	
@@ -442,6 +418,7 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 	return_state = {
 		"executed_actions": executed_actions,
 		"action_results": action_results,
+		"actions": [],
 		"history": existing_history + [new_history_entry],
 		"tab_count": len(current_tab_ids) if 'current_tab_ids' in locals() else state.get("tab_count", 1),
 		"previous_tabs": previous_tabs,  # Track tabs for next comparison
@@ -475,302 +452,3 @@ async def act_node(state: QAAgentState) -> Dict[str, Any]:
 		logger.info(f"   Switch context: {current_title} ({current_url})")
 	
 	return return_state
-
-
-def convert_to_action_model(action_dict: Dict[str, Any], ActionModelClass: type = None, registry = None) -> Any:
-	"""
-	Convert our action dict to browser ActionModel format
-
-	Args:
-		action_dict: Our action dictionary from LLM parsing
-		ActionModelClass: Dynamic ActionModel class with action fields (if None, will try to import)
-
-	Returns:
-		ActionModel instance or None if conversion fails
-	"""
-	action_type = action_dict.get("action") or action_dict.get("type")
-
-	if not action_type:
-		logger.warning(f"No action type in dict: {action_dict}")
-		return None
-
-	# Import action classes from browser
-	from web_agent.tools.views import (
-		ClickElementAction,
-		InputTextAction,
-		NavigateAction,
-		DoneAction,
-		ScrollAction,
-		SendKeysAction,
-		SwitchTabAction,
-		CloseTabAction,
-		ExtractAction,
-		SearchAction,
-		WaitAction,
-		NoParamsAction,
-		CheckboxAction,
-		GetDropdownOptionsAction,
-		SelectDropdownOptionAction,
-		UploadFileAction,
-	)
-	
-	# Use provided ActionModel class or fallback to base
-	if ActionModelClass is None:
-		from web_agent.agent.views import ActionModel as ActionModelClass
-
-	try:
-		# Map action types to ActionModel fields
-		# IMPORTANT: browser uses function names as ActionModel field names
-		# Function names: click, input, navigate, scroll, done, search, extract
-		# Also support legacy names: click_element, input_text, go_to_url (for backward compatibility)
-
-		# Handle click actions (both "click" and legacy "click_element")
-		if action_type == "click" or action_type == "click_element":
-			index = action_dict.get("index") or action_dict.get("element_index")
-			if index is None or index == 0:
-				logger.warning(f"Invalid index for click action (must be > 0): {action_dict}")
-				return None
-			return ActionModelClass(click=ClickElementAction(index=int(index)))
-
-		# Handle input actions (both "input" and legacy "input_text")
-		elif action_type == "input" or action_type == "input_text":
-			# Check for index explicitly (can be 0, which is valid for input)
-			index = action_dict.get("index")
-			if index is None:
-				index = action_dict.get("element_index")
-			text = action_dict.get("text") or action_dict.get("value", "")
-			if index is None:
-				logger.warning(f"No index for input action: {action_dict}")
-				return None
-			clear = action_dict.get("clear", True)
-			# Index 0 is valid for input actions (different from click which requires > 0)
-			return ActionModelClass(input=InputTextAction(index=int(index), text=str(text), clear=clear))
-
-		# Handle navigate actions (both "navigate" and legacy "go_to_url")
-		elif action_type == "navigate" or action_type == "go_to_url":
-			url = action_dict.get("url") or action_dict.get("target")
-			if not url:
-				logger.warning(f"No URL for navigate action: {action_dict}")
-				return None
-			new_tab = action_dict.get("new_tab", False)
-			return ActionModelClass(navigate=NavigateAction(url=str(url), new_tab=new_tab))
-
-		elif action_type == "done":
-			text = action_dict.get("text") or action_dict.get("message", "Task completed")
-			success = action_dict.get("success", True)
-			return ActionModelClass(done=DoneAction(text=str(text), success=success))
-
-		elif action_type == "scroll":
-			down = action_dict.get("down", True)
-			pages = action_dict.get("pages", 1.0)
-			index = action_dict.get("index")
-			return ActionModelClass(scroll=ScrollAction(down=down, pages=float(pages), index=int(index) if index else None))
-
-		elif action_type == "send_keys":
-			keys = action_dict.get("keys", "")
-			return ActionModelClass(send_keys=SendKeysAction(keys=str(keys)))
-
-		elif action_type == "switch_tab" or action_type == "switch":
-			# browser uses "switch" as the action name
-			tab_id = action_dict.get("tab_id", "")
-			# Ensure tab_id is 4 characters (last 4 of target_id) - browser requirement
-			if tab_id and len(str(tab_id)) > 4:
-				tab_id = str(tab_id)[-4:]
-			elif tab_id and len(str(tab_id)) < 4:
-				logger.warning(f"Tab ID {tab_id} is less than 4 characters, may be invalid")
-			return ActionModelClass(switch=SwitchTabAction(tab_id=str(tab_id)[-4:] if tab_id else ""))
-
-		elif action_type == "close_tab":
-			tab_id = action_dict.get("tab_id", "")
-			return ActionModelClass(close_tab=CloseTabAction(tab_id=str(tab_id)))
-
-		elif action_type == "extract":
-			# Handle both direct and params-wrapped formats
-			# Direct: {"action": "extract", "query": "..."}
-			# Wrapped: {"action": "extract", "params": {"query": "..."}}
-			params_dict = action_dict.get("params", {})
-			if params_dict:
-				# Params-wrapped format from registry
-				query = str(params_dict.get("query", "")).strip()
-				extract_links = params_dict.get("extract_links", False)
-				start_from_char = params_dict.get("start_from_char", 0)
-			else:
-				# Direct format (legacy/manual)
-				query = str(action_dict.get("query", "")).strip()
-				extract_links = action_dict.get("extract_links", False)
-				start_from_char = action_dict.get("start_from_char", 0)
-
-			if not query:
-				logger.warning("Extract action requires a non-empty query string")
-				return None
-
-			# Get param model from registry (browser pattern)
-			if registry and "extract" in registry.registry.actions:
-				extract_action_info = registry.registry.actions["extract"]
-				param_model = extract_action_info.param_model
-
-				# browser registry creates param_model from function signature
-				# Since extract() has params: ExtractAction as first param, the model expects:
-				# extract_Params(params: ExtractAction)
-				# So we need to create ExtractAction first, then wrap it in params field
-				from web_agent.tools.views import ExtractAction
-				extract_action = ExtractAction(
-					query=query,
-					extract_links=bool(extract_links),
-					start_from_char=int(start_from_char),
-				)
-				
-				# Check if param_model expects a 'params' field (registry-inferred pattern)
-				try:
-					# Try wrapping in 'params' field (registry pattern)
-					validated_params = param_model(params=extract_action)
-					return ActionModelClass(extract=validated_params)
-				except Exception:
-					# If that fails, try direct ExtractAction (shouldn't happen but fallback)
-					try:
-						validated_params = param_model(**extract_action.model_dump())
-						return ActionModelClass(extract=validated_params)
-					except Exception as e:
-						logger.warning(f"Could not create extract param_model: {e}, using ExtractAction directly")
-						return ActionModelClass(extract=extract_action)
-			else:
-				# Fallback to our ExtractAction (using variables extracted above)
-				return ActionModelClass(extract=ExtractAction(query=query, extract_links=bool(extract_links), start_from_char=int(start_from_char)))
-
-		elif action_type == "search":
-			# Handle both direct and params-wrapped formats
-			params_dict = action_dict.get("params", {})
-			if params_dict:
-				query = params_dict.get("query", "")
-				engine = params_dict.get("engine", "duckduckgo")
-			else:
-				query = action_dict.get("query", "")
-				engine = action_dict.get("engine", "duckduckgo")
-			return ActionModelClass(search=SearchAction(query=str(query), engine=engine))
-
-		elif action_type == "wait":
-			# Handle both direct and params-wrapped formats
-			params_dict = action_dict.get("params", {})
-			if params_dict:
-				seconds = int(params_dict.get("seconds", 3))
-			else:
-				seconds = int(action_dict.get("seconds", 3))
-
-			# Get param model from registry (browser pattern)
-			if registry and "wait" in registry.registry.actions:
-				wait_action_info = registry.registry.actions["wait"]
-				param_model = wait_action_info.param_model
-				# Validate and create param instance
-				validated_params = param_model(seconds=seconds)
-				return ActionModelClass(wait=validated_params)
-			else:
-				# Fallback to our WaitAction
-				from web_agent.tools.views import WaitAction
-				return ActionModelClass(wait=WaitAction(seconds=seconds))
-
-		elif action_type == "screenshot":
-			from web_agent.tools.views import NoParamsAction
-			# Screenshot uses NoParamsAction
-			return ActionModelClass(screenshot=NoParamsAction())
-
-		elif action_type == "go_back":
-			from web_agent.tools.views import NoParamsAction
-			# Go back uses NoParamsAction
-			return ActionModelClass(go_back=NoParamsAction())
-
-		elif action_type == "checkbox":
-			index = action_dict.get("index")
-			if index is None:
-				logger.warning(f"No index for checkbox action: {action_dict}")
-				return None
-			if index == 0:
-				logger.warning(f"Invalid index for checkbox action (must be > 0): {action_dict}")
-				return None
-			checked = action_dict.get("checked")
-			# checked can be True, False, or None (for toggle)
-			return ActionModelClass(checkbox=CheckboxAction(index=int(index), checked=checked))
-
-		elif action_type == "dropdown_options":
-			index = action_dict.get("index")
-			if index is None:
-				logger.warning(f"No index for dropdown_options action: {action_dict}")
-				return None
-			if index == 0:
-				logger.warning(f"Invalid index for dropdown_options action (must be > 0): {action_dict}")
-				return None
-			return ActionModelClass(dropdown_options=GetDropdownOptionsAction(index=int(index)))
-
-		elif action_type == "select_dropdown":
-			index = action_dict.get("index")
-			text = action_dict.get("text", "")
-			if index is None:
-				logger.warning(f"No index for select_dropdown action: {action_dict}")
-				return None
-			if index == 0:
-				logger.warning(f"Invalid index for select_dropdown action (must be > 0): {action_dict}")
-				return None
-			if not text:
-				logger.warning(f"No text for select_dropdown action: {action_dict}")
-				return None
-			return ActionModelClass(select_dropdown=SelectDropdownOptionAction(index=int(index), text=str(text)))
-
-		elif action_type == "close":
-			# "close" uses CloseTabAction (same as close_tab)
-			tab_id = action_dict.get("tab_id", "")
-			if not tab_id:
-				logger.warning(f"No tab_id for close action: {action_dict}")
-				return None
-			# Ensure tab_id is 4 characters
-			if len(str(tab_id)) > 4:
-				tab_id = str(tab_id)[-4:]
-			elif len(str(tab_id)) < 4:
-				logger.warning(f"Tab ID {tab_id} is less than 4 characters, may be invalid")
-			return ActionModelClass(close=CloseTabAction(tab_id=str(tab_id)[-4:] if tab_id else ""))
-
-		elif action_type == "upload_file":
-			index = action_dict.get("index")
-			path = action_dict.get("path", "")
-			if index is None:
-				logger.warning(f"No index for upload_file action: {action_dict}")
-				return None
-			if not path:
-				logger.warning(f"No path for upload_file action: {action_dict}")
-				return None
-			return ActionModelClass(upload_file=UploadFileAction(index=int(index), path=str(path)))
-
-		elif action_type in ["evaluate", "find_text", "read_file", "replace_file", "write_file"]:
-			# These actions use registry-created param models from function signatures
-			# Get param model from registry
-			if registry and action_type in registry.registry.actions:
-				action_info = registry.registry.actions[action_type]
-				param_model = action_info.param_model
-
-				# Handle both direct and params-wrapped formats
-				# Direct: {"action": "read_file", "path": "..."}
-				# Wrapped: {"action": "read_file", "params": {"path": "..."}}
-				if "params" in action_dict and isinstance(action_dict["params"], dict):
-					# Params-wrapped format from registry
-					params_dict = action_dict["params"]
-				else:
-					# Direct format - extract params from action_dict (excluding special params)
-					special_params = {"browser_session", "file_system", "available_file_paths", "page_extraction_llm", "action"}
-					params_dict = {k: v for k, v in action_dict.items() if k not in special_params}
-
-				try:
-					# Validate and create param instance
-					validated_params = param_model(**params_dict)
-					return ActionModelClass(**{action_type: validated_params})
-				except Exception as e:
-					logger.warning(f"Could not create {action_type} param_model: {e}, params_dict: {params_dict}")
-					return None
-			else:
-				logger.warning(f"Action {action_type} not found in registry")
-				return None
-
-		else:
-			logger.warning(f"Unknown action type: {action_type}")
-			return None
-
-	except Exception as e:
-		logger.error(f"Error converting action {action_type} to ActionModel: {e}", exc_info=True)
-		return None

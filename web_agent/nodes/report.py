@@ -109,11 +109,11 @@ def _format_agent_steps_from_history(history: List[Dict[str, Any]]) -> List[str]
 		if node_type == "think":
 			step_number += 1
 			goal = entry.get("current_goal", "No goal specified")
-			planned_actions_count = len(entry.get("planned_actions", []))
+			actions_count = len(entry.get("actions", []))
 
 			step_text = f"Step {step_number}: {goal}"
-			if planned_actions_count > 0:
-				step_text += f" (planned {planned_actions_count} actions)"
+			if actions_count > 0:
+				step_text += f" (planned {actions_count} actions)"
 
 			agent_steps.append(step_text)
 
@@ -197,7 +197,6 @@ def _convert_state_history_to_agent_history_list(state: QAAgentState):
 	"""
 	from web_agent.agent.views import AgentHistory, AgentHistoryList, AgentOutput, ActionResult
 	from web_agent.browser.views import BrowserStateHistory
-	from web_agent.tools.registry.views import ActionModel
 
 	history_items = []
 	workflow_history = state.get("history", [])
@@ -224,24 +223,16 @@ def _convert_state_history_to_agent_history_list(state: QAAgentState):
 
 		# Collect think node data (model output)
 		if node_type == "think":
-			planned_actions = entry.get("planned_actions", [])
+			think_actions = entry.get("actions", [])
 			current_goal = entry.get("current_goal", "")
 
-			# Reconstruct AgentOutput from think data
-			if planned_actions:
-				# Convert action dicts back to ActionModel objects
-				action_models = []
-				for action_data in planned_actions:
-					if hasattr(action_data, 'model_dump'):  # Already ActionModel
-						action_models.append(action_data)
-					# Skip dict conversion for now - GIF only needs goals
-
+			if think_actions:
 				model_output = AgentOutput(
 					thinking=entry.get("thinking", ""),
 					evaluation_previous_goal=entry.get("evaluation_previous_goal", ""),
 					memory=entry.get("memory", ""),
 					next_goal=current_goal or "Continue task execution",
-					action=action_models if action_models else []  # Will use empty list if conversion fails
+					action=[],
 				)
 				current_step_data[step_num]["model_output"] = model_output
 
@@ -327,7 +318,7 @@ async def report_node(state: QAAgentState) -> Dict[str, Any]:
 			"error": state.get("error"),
 			"timestamp": datetime.now().isoformat(),
 			"executed_actions_count": len(state.get("executed_actions", [])),
-			"planned_actions_count": len(state.get("planned_actions", [])),
+			"planned_actions_count": len(state.get("actions", [])),
 		}
 
 		# ============================================================

@@ -5,7 +5,7 @@ HYBRID Architecture (Computer-Use + Enhanced Features):
 - init: Initialize browser session and create todo.md (LLM-driven, structured)
 - plan: Decompose complex tasks into sequential goals (LLM-driven)
 - think: Full computer-use THINK - sees DOM, generates actions directly
-- act: Pure executor - executes planned_actions, returns fresh state
+- act: Pure executor - executes actions, returns fresh state
 - report: Generate final report
 - verify: (Legacy) Kept for backward compatibility, not used in main workflow
 
@@ -13,12 +13,12 @@ THINK Node (Computer-Use Pattern):
   - Input: Full browser state with DOM tree + todo.md + history
   - Uses: AgentMessagePrompt (like browser-use main branch)
   - Sees: Complete accessibility tree, form values, interactive elements
-  - Generates: planned_actions directly (list of ActionModel)
+  - Generates: actions directly (list of normalized tool calls)
   - Updates: todo.md with completed steps (NEW enhancement)
-  - Output: planned_actions for ACT to execute
+  - Output: actions for ACT to execute
 
 ACT Node (Pure Executor):
-  - Input: planned_actions from THINK
+  - Input: actions from THINK
   - Executes: Actions via Tools.act()
   - Waits: Adaptive DOM stability detection (NEW enhancement)
   - Returns: Fresh browser state, action results

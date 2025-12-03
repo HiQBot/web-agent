@@ -61,9 +61,32 @@ The agent uses **OpenAI models** (currently) to make intelligent decisions based
 
 ## Quick Start
 
+### Browser Provider Selection
+
+This project supports two browser providers:
+- **OnKernal**: Remote browser via Docker (recommended for production)
+- **Chrome**: Local Chrome/Chromium browser (easier for development)
+
+Select your provider by setting `BROWSER_PROVIDER` in your `.env` file:
+```bash
+BROWSER_PROVIDER=onkernal  # or "chrome"
+```
+
+### Live Preview Support 🎥
+
+Both browser providers support **Live Preview** - watch the browser in real-time as the AI performs actions:
+
+#### OnKernal Browser
+Streams via WebRTC iframe (runs in Docker container). No additional setup needed.
+
+#### Local Chrome Browser
+Streams via CDP screencast to a canvas element. Chrome window will be visible on your desktop AND streamed to Live Preview.
+
 ### OnKernal Browser Setup
 
-This project requires OnKernal Browser to be running. OnKernal provides a Docker-based browser service that exposes Chrome DevTools Protocol (CDP) for automation.
+**Required when `BROWSER_PROVIDER=onkernal`**
+
+OnKernal provides a Docker-based browser service that exposes Chrome DevTools Protocol (CDP) for automation.
 
 ```bash
 # Clone the OnKernal repository
@@ -106,9 +129,29 @@ The browser will be available at:
 - Use `ENABLE_WEBRTC=true` if you want to view browser automation in the frontend
 - Use `ENABLE_WEBRTC=false` for headless automation without UI streaming
 
+### Chrome Browser Setup
+
+**Required when `BROWSER_PROVIDER=chrome`**
+
+For local development, you can use Chrome/Chromium directly without Docker:
+
+```bash
+# Chrome/Chromium will be auto-detected, or set explicitly:
+# CHROME_EXECUTABLE_PATH=/usr/bin/google-chrome
+```
+
+The backend will automatically:
+- Launch Chrome with CDP enabled on port 9222
+- Stream browser viewport to frontend on port 8080
+- Manage Chrome process lifecycle
+
+**Note**: Chrome must be installed on your system. The backend will auto-detect common installation paths.
+
 ### Backend Setup
 
-**Prerequisites**: OnKernal Browser must be running (see above).
+**Prerequisites**: 
+- If using OnKernal: OnKernal Browser must be running (see above)
+- If using Chrome: Chrome/Chromium must be installed (auto-launched by backend)
 
 ```bash
 # Clone the repository
@@ -121,7 +164,8 @@ pip install -r requirements.txt
 # Configure environment
 cp env.example .env
 # Edit .env and add your OPENAI_API_KEY
-# Configure OnKernal Browser connection (defaults: localhost:9222)
+# Select browser provider: BROWSER_PROVIDER=onkernal or BROWSER_PROVIDER=chrome
+# Configure ports if needed (defaults: CDP_PORT=9222, STREAMING_PORT=8080)
 
 # Run the API server
 python run.py
@@ -149,10 +193,15 @@ npm run dev
 
 **Architecture Overview**:
 - **Frontend** (port 3000) → connects to **Backend API** (port 8000)
-- **Backend API** (port 8000) → connects to **OnKernal Browser** via CDP (port 9222)
-- **OnKernal Browser UI** (port 8080) → displayed in frontend iframe for live viewing
+- **Backend API** (port 8000) → connects to browser via CDP (port 9222)
+- **Browser UI** (port 8080) → displayed in frontend for live viewing
+  - OnKernal: WebRTC streaming interface
+  - Chrome: CDP screencast streaming
 
-**Note**: Make sure OnKernal Browser is running and accessible on the configured CDP port (default: 9222) before starting the backend.
+**Note**: 
+- For OnKernal: Make sure OnKernal Browser is running before starting the backend
+- For Chrome: Backend will auto-launch Chrome on startup
+- Port conflicts are automatically detected and alternative ports are used if needed
 
 ## Project Structure
 

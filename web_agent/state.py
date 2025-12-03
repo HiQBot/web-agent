@@ -62,9 +62,8 @@ class QAAgentState(TypedDict):
     file_system_state: Optional[FileSystemState]  # Persisted FileSystem state
     
     # ========== Action Planning & Execution ==========
-    # Note: planned_actions are ActionModel objects from LLM, but stored as Any for state flexibility
-    # think.py returns list[ActionModel], act.py receives them directly
-    planned_actions: List[Any]  # Actions planned by think node (ActionModel objects)
+    # THINK now returns provider-agnostic tool call dictionaries
+    actions: List[Dict[str, Any]]  # Normalized tool calls planned by think node
     executed_actions: List[Dict[str, Any]]  # Actions executed by act node (as dicts for history)
     action_results: List[Dict[str, Any]]  # Results from executed actions
     
@@ -185,7 +184,7 @@ def create_initial_state(
         "file_system_state": None,  # Created in think_node, persisted across steps
         
         # Action planning & execution
-        "planned_actions": [],
+        "actions": [],
         "executed_actions": [],
         "action_results": [],
         
