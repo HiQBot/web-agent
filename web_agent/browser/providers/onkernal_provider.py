@@ -12,7 +12,6 @@ from web_agent.browser.session import BrowserSession
 from web_agent.browser.profile import BrowserProfile
 from web_agent.browser.providers import BrowserProvider
 from web_agent.config import settings
-from web_agent.utils.port_manager import get_available_cdp_port
 from web_agent.utils.session_registry import register_session, unregister_session
 
 logger = logging.getLogger(__name__)
@@ -40,14 +39,11 @@ class OnKernalProvider(BrowserProvider):
 		# Generate unique session ID
 		session_id = uuid7str()
 		
-		# Get CDP port (with conflict detection)
-		# Use kernel_cdp_port if available, otherwise use cdp_port
-		requested_port = getattr(settings, 'kernel_cdp_port', None) or getattr(settings, 'cdp_port', 9222)
-		cdp_port = get_available_cdp_port(requested_port=requested_port)
-		self._cdp_port = cdp_port
+		# Use the configured OnKernal CDP port directly (the service already binds to it)
+		self._cdp_port = getattr(settings, 'kernel_cdp_port', None) or getattr(settings, 'cdp_port', 9222)
 		
 		# Get WebSocket debugger URL from OnKernal HTTP endpoint
-		http_url = f"http://{settings.kernel_cdp_host}:{cdp_port}"
+		http_url = f"http://{settings.kernel_cdp_host}:{self._cdp_port}"
 		logger.info(f"Querying CDP endpoint at: {http_url}")
 		
 		try:
